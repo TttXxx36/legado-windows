@@ -36,6 +36,7 @@ import io.legado.desktop.engine.BookSourceEngine
 import io.legado.desktop.engine.local.LocalBookImporter
 import io.legado.desktop.engine.rule.ReplaceRuleEngine
 import io.legado.desktop.engine.tts.TtsEngine
+import io.legado.desktop.ui.theme.LegadoIcons
 import kotlinx.coroutines.launch
 
 enum class ReadTheme(
@@ -260,7 +261,7 @@ fun ReaderView(
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(
-                                        Icons.Default.Image,
+                                        LegadoIcons.Image,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(56.dp)
@@ -373,7 +374,7 @@ fun ReaderView(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { handleClose() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回书架")
+                            Icon(Icons.Default.ArrowBack, contentDescription = "返回书架")
                         }
                         Spacer(Modifier.width(8.dp))
                         Column {
@@ -416,7 +417,7 @@ fun ReaderView(
                             }
                         ) {
                             Icon(
-                                if (isCurrentChapterBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                if (isCurrentChapterBookmarked) LegadoIcons.Bookmark else LegadoIcons.BookmarkBorder,
                                 contentDescription = "书签",
                                 tint = if (isCurrentChapterBookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
@@ -436,7 +437,7 @@ fun ReaderView(
                             }
                         ) {
                             Icon(
-                                if (isTtsActive) Icons.AutoMirrored.Filled.VolumeUp else Icons.Default.Headphones,
+                                if (isTtsActive) LegadoIcons.VolumeUp else LegadoIcons.Headphones,
                                 contentDescription = "语音朗读",
                                 tint = if (isTtsActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
@@ -444,7 +445,7 @@ fun ReaderView(
 
                         IconButton(onClick = { isComicMode = !isComicMode }) {
                             Icon(
-                                if (isComicMode) Icons.AutoMirrored.Filled.MenuBook else Icons.Default.PhotoLibrary,
+                                if (isComicMode) LegadoIcons.MenuBook else LegadoIcons.PhotoLibrary,
                                 contentDescription = "切换条漫模式",
                                 tint = if (isComicMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
@@ -452,7 +453,7 @@ fun ReaderView(
 
                         IconButton(onClick = { isDualPage = !isDualPage }) {
                             Icon(
-                                if (isDualPage) Icons.Default.ViewAgenda else Icons.Default.AutoStories,
+                                if (isDualPage) LegadoIcons.ViewAgenda else LegadoIcons.AutoStories,
                                 contentDescription = "切换单/双页模式"
                             )
                         }
@@ -460,7 +461,7 @@ fun ReaderView(
                             Icon(Icons.Default.Menu, contentDescription = "目录与书签")
                         }
                         IconButton(onClick = { showSettingsDialog = true }) {
-                            Icon(Icons.Default.Tune, contentDescription = "排版设置")
+                            Icon(LegadoIcons.Tune, contentDescription = "排版设置")
                         }
                     }
                 }
@@ -505,7 +506,7 @@ fun ReaderView(
                         }
                     ) {
                         Icon(
-                            if (isTtsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            if (isTtsPlaying) LegadoIcons.Pause else Icons.Default.PlayArrow,
                             contentDescription = "播放/暂停"
                         )
                     }
@@ -578,7 +579,7 @@ fun ReaderView(
                         onClick = { if (currentChapterIndex > 0) currentChapterIndex-- },
                         enabled = currentChapterIndex > 0
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = null)
+                        Icon(LegadoIcons.NavigateBefore, contentDescription = null)
                         Text("上一章")
                     }
 
@@ -593,7 +594,7 @@ fun ReaderView(
                         enabled = currentChapterIndex < chapters.size - 1
                     ) {
                         Text("下一章")
-                        Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = null)
+                        Icon(LegadoIcons.NavigateNext, contentDescription = null)
                     }
                 }
             }

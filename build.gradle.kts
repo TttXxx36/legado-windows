@@ -23,7 +23,6 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation(compose.material3)
-                implementation(compose.materialIconsExtended)
                 implementation(compose.components.resources)
 
                 // Coroutines
@@ -67,6 +66,8 @@ compose.desktop {
             description = "Legado with MD3 for Windows"
             copyright = "© 2026 Legado Community"
             vendor = "Legado Open Source"
+
+            modules("java.base", "java.desktop", "java.sql", "java.naming", "java.management", "java.xml", "java.net.http", "jdk.unsupported", "jdk.crypto.ec")
 
             windows {
                 menuGroup = "Legado"

@@ -6,9 +6,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import io.legado.desktop.ui.theme.LegadoIcons
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -200,7 +200,7 @@ fun SearchResultCard(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            Icons.AutoMirrored.Filled.MenuBook,
+                            LegadoIcons.MenuBook,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -247,7 +247,7 @@ fun SearchResultCard(
                     },
                     enabled = !added
                 ) {
-                    Icon(if (added) Icons.Default.Check else Icons.Default.BookmarkAdd, contentDescription = null)
+                    Icon(if (added) Icons.Default.Check else LegadoIcons.BookmarkAdd, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text(if (added) "已在书架" else "加书架")
                 }

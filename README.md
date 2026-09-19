@@ -100,6 +100,20 @@ cd legado-windows
 
 ---
 
+## 📚 核心技术与工程文档中心 (Documentation)
+
+本项目维护了全面、严谨的工程实践与架构演进文档体系，详情请参阅各专题报告：
+
+| 文档名称 | 路径与导航 | 核心覆盖内容 |
+| :--- | :--- | :--- |
+| **📖 文档导航总览** | [docs/README.md](docs/README.md) | 全局文档索引、文档规范与各模块跳转指引 |
+| **🗺 开发规划路线图** | [docs/planning/ROADMAP.md](docs/planning/ROADMAP.md) | Phase 1~5 全演进阶段、关键完成标准与未来规划 |
+| **🧪 测试与性能基准** | [docs/testing/TESTING_GUIDE.md](docs/testing/TESTING_GUIDE.md) | 13项全自动化测试矩阵、启动耗时与内存量化指标、多DPI适配 |
+| **🛡 安全与合规审计** | [docs/audit/AUDIT_REPORT.md](docs/audit/AUDIT_REPORT.md) | Rhino JS 沙箱防逃逸、AppData 目录隔离、WebDAV 传输加密与开源协议合规 |
+| **💡 重大技术突破** | [docs/breakthroughs/CORE_BREAKTHROUGHS.md](docs/breakthroughs/CORE_BREAKTHROUGHS.md) | Legado 3.0 统一规则引擎、Skia 宽屏排版、SAPI 听书、安装包暴减 40MB 瘦身实录 |
+
+---
+
 ## 🛠 技术架构 (Tech Stack)
 
 ```

@@ -36,6 +36,7 @@ import io.legado.desktop.engine.BookSourceEngine
 import io.legado.desktop.engine.local.LocalBookImporter
 import io.legado.desktop.engine.sync.WebDavSync
 import io.legado.desktop.server.LegadoWebServer
+import io.legado.desktop.ui.theme.LegadoIcons
 import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
@@ -48,10 +49,10 @@ enum class NavDestination(
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector
 ) {
-    BOOKSHELF("书架", Icons.Filled.Book, Icons.Outlined.Book),
-    DISCOVER("发现", Icons.Filled.Explore, Icons.Outlined.Explore),
-    SOURCES("书源", Icons.AutoMirrored.Filled.LibraryBooks, Icons.AutoMirrored.Outlined.LibraryBooks),
-    SETTINGS("设置", Icons.Filled.Settings, Icons.Outlined.Settings)
+    BOOKSHELF("书架", LegadoIcons.Book, LegadoIcons.Book),
+    DISCOVER("发现", LegadoIcons.Explore, LegadoIcons.Explore),
+    SOURCES("书源", LegadoIcons.LibraryBooks, LegadoIcons.LibraryBooks),
+    SETTINGS("设置", LegadoIcons.Settings, LegadoIcons.Settings)
 }
 
 @Composable
@@ -135,7 +136,7 @@ fun AppShell(
                         modifier = Modifier.padding(top = 12.dp)
                     ) {
                         Icon(
-                            imageVector = if (darkTheme) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                            imageVector = if (darkTheme) LegadoIcons.LightMode else LegadoIcons.DarkMode,
                             contentDescription = "切换深浅主题"
                         )
                     }
@@ -391,7 +392,7 @@ fun BookCard(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
-                        Icons.AutoMirrored.Filled.MenuBook,
+                        LegadoIcons.MenuBook,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.size(48.dp)
@@ -480,7 +481,7 @@ fun SourcesView(
             }
 
             Button(onClick = { showImportDialog = true }) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(LegadoIcons.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("导入书源")
             }
@@ -495,7 +496,7 @@ fun SourcesView(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
-                        Icons.AutoMirrored.Filled.LibraryBooks,
+                        LegadoIcons.LibraryBooks,
                         contentDescription = null,
                         modifier = Modifier.size(64.dp),
                         tint = MaterialTheme.colorScheme.outline
@@ -782,7 +783,7 @@ fun SettingsView(
                         },
                         enabled = !isWebDavBusy && webDavUrl.isNotBlank()
                     ) {
-                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(LegadoIcons.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("备份到云端")
                     }
@@ -800,7 +801,7 @@ fun SettingsView(
                         },
                         enabled = !isWebDavBusy && webDavUrl.isNotBlank()
                     ) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(LegadoIcons.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("从云端恢复")
                     }
@@ -972,7 +973,7 @@ fun SettingsView(
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Icon(LegadoIcons.Language, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("在浏览器中打开")
                         }
