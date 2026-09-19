@@ -71,14 +71,15 @@
 
 ## 🚀 快速开始 (Quick Start)
 
-### 方式一：下载预编译可执行版本 (推荐)
-1. 前往 **[Releases 页面](https://github.com/TttXxx36/legado-windows/releases/latest)**。
-2. 下载最新的 `legado-windows-v1.0.0-portable.zip` 或 `LegadoDesktop-windows-x64-1.0.0.jar`。
-3. 确保电脑已安装 **Java 17 或更高版本**（推荐 [OpenJDK 21](https://learn.microsoft.com/en-us/java/openjdk/download)）。
-4. 双击运行，或在终端中执行：
-   ```powershell
-   java -jar LegadoDesktop-windows-x64-1.0.0.jar
-   ```
+### 方式一：下载预编译版本 (推荐)
+前往 **[Releases 页面](https://github.com/TttXxx36/legado-windows/releases/latest)** 选择合适版本：
+
+| 格式 | 文件名 | 说明 |
+| :--- | :--- | :--- |
+| **EXE 安装包 (推荐)** | `LegadoDesktop-1.0.0.exe` | 现代化向导式安装，自动创建桌面及开始菜单快捷方式，**内置 JRE，免装 Java** |
+| **MSI 安装包** | `LegadoDesktop-1.0.0.msi` | Windows Installer 原生安装包，支持静默部署 |
+| **免安装便携版 (推荐)** | `LegadoDesktop-windows-x64-1.0.0-portable.zip` | 解压即用绿色版，双击 `LegadoDesktop.exe` 即可启动，**零依赖免配置** |
+| **可执行 JAR** | `LegadoDesktop-windows-x64-1.0.0.jar` | 跨平台 Uber-JAR，需 Java 17/21 环境 (`java -jar`) |
 
 ### 方式二：从源码编译构建
 ```powershell
