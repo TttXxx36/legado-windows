@@ -1,0 +1,18 @@
+# Gradle
+.gradle/
+.kotlin/
+build/
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# OS / Logs
+*.log
+local.properties
+hs_err_pid*
+Thumbs.db
+.DS_Store
