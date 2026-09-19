@@ -13,9 +13,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.*
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -374,7 +371,7 @@ fun ReaderView(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { handleClose() }) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "返回书架")
+                            Icon(LegadoIcons.ArrowBack, contentDescription = "返回书架")
                         }
                         Spacer(Modifier.width(8.dp))
                         Column {
@@ -458,7 +455,7 @@ fun ReaderView(
                             )
                         }
                         IconButton(onClick = { showTOC = true }) {
-                            Icon(Icons.Default.Menu, contentDescription = "目录与书签")
+                            Icon(LegadoIcons.Menu, contentDescription = "目录与书签")
                         }
                         IconButton(onClick = { showSettingsDialog = true }) {
                             Icon(LegadoIcons.Tune, contentDescription = "排版设置")
@@ -506,7 +503,7 @@ fun ReaderView(
                         }
                     ) {
                         Icon(
-                            if (isTtsPlaying) LegadoIcons.Pause else Icons.Default.PlayArrow,
+                            if (isTtsPlaying) LegadoIcons.Pause else LegadoIcons.PlayArrow,
                             contentDescription = "播放/暂停"
                         )
                     }
@@ -546,7 +543,7 @@ fun ReaderView(
                             TtsEngine.stop()
                         }
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "关闭朗读")
+                        Icon(LegadoIcons.Close, contentDescription = "关闭朗读")
                     }
                 }
             }
@@ -694,7 +691,7 @@ fun ReaderView(
                                                     modifier = Modifier.size(24.dp)
                                                 ) {
                                                     Icon(
-                                                        Icons.Default.Delete,
+                                                        LegadoIcons.Delete,
                                                         contentDescription = "删除书签",
                                                         tint = MaterialTheme.colorScheme.error,
                                                         modifier = Modifier.size(16.dp)

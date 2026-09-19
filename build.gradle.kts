@@ -23,7 +23,6 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation(compose.material3)
-                implementation(compose.components.resources)
 
                 // Coroutines
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
@@ -39,8 +38,9 @@ kotlin {
                 // JavaScript runtime for Legado book source evaluation
                 implementation("org.mozilla:rhino:1.7.15")
 
-                // SQLite database
-                implementation("org.xerial:sqlite-jdbc:3.46.1.0")
+                // SQLite database (Windows x64 stripped minimal runtime: 0.74 MB)
+                implementation(files("libs/sqlite-jdbc-3.46.1.0-win64.jar"))
+                implementation("org.slf4j:slf4j-api:1.7.36")
 
                 // System directories (Windows AppData)
                 implementation("dev.dirs:directories:26")
@@ -67,7 +67,7 @@ compose.desktop {
             copyright = "© 2026 Legado Community"
             vendor = "Legado Open Source"
 
-            modules("java.base", "java.desktop", "java.sql", "java.naming", "java.management", "java.xml", "java.net.http", "jdk.unsupported", "jdk.crypto.ec")
+            modules("java.base", "java.desktop", "java.sql", "jdk.unsupported", "jdk.crypto.ec")
 
             windows {
                 menuGroup = "Legado"

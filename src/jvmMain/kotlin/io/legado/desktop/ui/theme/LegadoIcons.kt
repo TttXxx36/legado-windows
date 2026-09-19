@@ -563,4 +563,155 @@ object LegadoIcons {
             close()
         }
     }
+
+    val ArrowBack: ImageVector by lazy {
+        buildIcon("ArrowBack") {
+            moveTo(20f, 11f)
+            horizontalLineTo(7.83f)
+            lineTo(13.42f, 5.41f)
+            lineTo(12f, 4f)
+            lineTo(4f, 12f)
+            lineTo(12f, 20f)
+            lineTo(13.41f, 18.59f)
+            lineTo(7.83f, 13f)
+            horizontalLineTo(20f)
+            verticalLineTo(11f)
+            close()
+        }
+    }
+
+    val Menu: ImageVector by lazy {
+        buildIcon("Menu") {
+            moveTo(3f, 18f)
+            horizontalLineTo(21f)
+            verticalLineTo(16f)
+            horizontalLineTo(3f)
+            verticalLineTo(18f)
+            close()
+            moveTo(3f, 13f)
+            horizontalLineTo(21f)
+            verticalLineTo(11f)
+            horizontalLineTo(3f)
+            verticalLineTo(13f)
+            close()
+            moveTo(3f, 6f)
+            verticalLineTo(8f)
+            horizontalLineTo(21f)
+            verticalLineTo(6f)
+            horizontalLineTo(3f)
+            close()
+        }
+    }
+
+    val Close: ImageVector by lazy {
+        buildIcon("Close") {
+            moveTo(19f, 6.41f)
+            lineTo(17.59f, 5f)
+            lineTo(12f, 10.59f)
+            lineTo(6.41f, 5f)
+            lineTo(5f, 6.41f)
+            lineTo(10.59f, 12f)
+            lineTo(5f, 17.59f)
+            lineTo(6.41f, 19f)
+            lineTo(12f, 13.41f)
+            lineTo(17.59f, 19f)
+            lineTo(19f, 17.59f)
+            lineTo(13.41f, 12f)
+            close()
+        }
+    }
+
+    val Add: ImageVector by lazy {
+        buildIcon("Add") {
+            moveTo(19f, 13f)
+            horizontalLineTo(13f)
+            verticalLineTo(19f)
+            horizontalLineTo(11f)
+            verticalLineTo(13f)
+            horizontalLineTo(5f)
+            verticalLineTo(11f)
+            horizontalLineTo(11f)
+            verticalLineTo(5f)
+            horizontalLineTo(13f)
+            verticalLineTo(11f)
+            horizontalLineTo(19f)
+            verticalLineTo(13f)
+            close()
+        }
+    }
+
+    val Delete: ImageVector by lazy {
+        buildIcon("Delete") {
+            moveTo(6f, 19f)
+            curveTo(6f, 20.1f, 6.9f, 21f, 8f, 21f)
+            horizontalLineTo(16f)
+            curveTo(17.1f, 21f, 18f, 20.1f, 18f, 19f)
+            verticalLineTo(7f)
+            horizontalLineTo(6f)
+            verticalLineTo(19f)
+            close()
+            moveTo(19f, 4f)
+            horizontalLineTo(15.5f)
+            lineTo(14.5f, 3f)
+            horizontalLineTo(9.5f)
+            lineTo(8.5f, 4f)
+            horizontalLineTo(5f)
+            verticalLineTo(6f)
+            horizontalLineTo(19f)
+            verticalLineTo(4f)
+            close()
+        }
+    }
+
+    val Clear: ImageVector by lazy {
+        Close
+    }
+
+    val Search: ImageVector by lazy {
+        buildIcon("Search") {
+            moveTo(15.5f, 14f)
+            horizontalLineTo(14.71f)
+            lineTo(14.43f, 13.73f)
+            curveTo(15.41f, 12.59f, 16f, 11.11f, 16f, 9.5f)
+            curveTo(16f, 5.91f, 13.09f, 3f, 9.5f, 3f)
+            curveTo(5.91f, 3f, 3f, 5.91f, 3f, 9.5f)
+            curveTo(3f, 13.09f, 5.91f, 16f, 9.5f, 16f)
+            curveTo(11.11f, 16f, 12.59f, 15.41f, 13.73f, 14.43f)
+            lineTo(14f, 14.71f)
+            verticalLineTo(15.5f)
+            lineTo(19f, 20.49f)
+            lineTo(20.49f, 19f)
+            lineTo(15.5f, 14f)
+            close()
+            moveTo(9.5f, 14f)
+            curveTo(7.01f, 14f, 5f, 11.99f, 5f, 9.5f)
+            curveTo(5f, 7.01f, 7.01f, 5f, 9.5f, 5f)
+            curveTo(11.99f, 5f, 14f, 7.01f, 14f, 9.5f)
+            curveTo(14f, 11.99f, 11.99f, 14f, 9.5f, 14f)
+            close()
+        }
+    }
+
+    val Check: ImageVector by lazy {
+        buildIcon("Check") {
+            moveTo(9f, 16.17f)
+            lineTo(4.83f, 12f)
+            lineTo(3.41f, 13.41f)
+            lineTo(9f, 19f)
+            lineTo(21f, 7f)
+            lineTo(19.59f, 5.59f)
+            lineTo(9f, 16.17f)
+            close()
+        }
+    }
+
+    val PlayArrow: ImageVector by lazy {
+        buildIcon("PlayArrow") {
+            moveTo(8f, 5f)
+            verticalLineTo(19f)
+            lineTo(19f, 12f)
+            lineTo(8f, 5f)
+            close()
+        }
+    }
 }

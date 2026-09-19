@@ -74,12 +74,13 @@
 ### 方式一：下载预编译版本 (推荐)
 前往 **[Releases 页面](https://github.com/TttXxx36/legado-windows/releases/latest)** 选择合适版本：
 
-| 格式 | 文件名 | 说明 |
-| :--- | :--- | :--- |
-| **EXE 安装包 (推荐)** | `LegadoDesktop-1.0.0.exe` | 现代化向导式安装，自动创建桌面及开始菜单快捷方式，**内置 JRE，免装 Java** |
-| **MSI 安装包** | `LegadoDesktop-1.0.0.msi` | Windows Installer 原生安装包，支持静默部署 |
-| **免安装便携版 (推荐)** | `LegadoDesktop-windows-x64-1.0.0-portable.zip` | 解压即用绿色版，双击 `LegadoDesktop.exe` 即可启动，**零依赖免配置** |
-| **可执行 JAR** | `LegadoDesktop-windows-x64-1.0.0.jar` | 跨平台 Uber-JAR，需 Java 17/21 环境 (`java -jar`) |
+| 格式 | 文件名 | 体积 | 说明与适用场景 |
+| :--- | :--- | :--- | :--- |
+| **🚀 极速免安装便携版 (首推)** | `LegadoDesktop-windows-x64-1.1.0-ultralight.zip` | **35.9 MB** | ⭐️⭐️⭐️⭐️⭐️ **极致轻量**：双击一键启动，完美命中 30~40MB 黄金体积，极速下载 |
+| **可执行 Uber-JAR** | `LegadoDesktop-windows-x64-1.1.0.jar` | **38.0 MB** | 跨平台开发者独立运行包，支持 `java -jar` 直接运行 |
+| **Windows EXE 安装包** | `LegadoDesktop-1.1.0.exe` | **62.1 MB** | 向导式安装，自动创建桌面及开始菜单快捷方式，**内置独立 JRE，免装 Java** |
+| **Windows MSI 安装包** | `LegadoDesktop-1.1.0.msi` | **61.6 MB** | Windows Installer 原生企业标准安装包，支持静默分发 |
+| **全内置 JRE 便携版** | `LegadoDesktop-windows-x64-1.1.0-portable.zip` | **67.1 MB** | 完整独立免安装便携包，自带独立 JRE 运行时与 Skia 图形引擎，零配置 |
 
 ### 方式二：从源码编译构建
 ```powershell

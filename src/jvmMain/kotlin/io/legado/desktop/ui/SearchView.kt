@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import io.legado.desktop.ui.theme.LegadoIcons
 import androidx.compose.runtime.*
@@ -94,7 +92,7 @@ fun SearchView(
                 trailingIcon = {
                     if (searchKeyword.isNotEmpty()) {
                         IconButton(onClick = { searchKeyword = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "清空")
+                            Icon(LegadoIcons.Clear, contentDescription = "清空")
                         }
                     }
                 }
@@ -113,7 +111,7 @@ fun SearchView(
                         strokeWidth = 2.dp
                     )
                 } else {
-                    Icon(Icons.Default.Search, contentDescription = null)
+                    Icon(LegadoIcons.Search, contentDescription = null)
                 }
                 Spacer(Modifier.width(8.dp))
                 Text("搜索")
@@ -247,13 +245,13 @@ fun SearchResultCard(
                     },
                     enabled = !added
                 ) {
-                    Icon(if (added) Icons.Default.Check else LegadoIcons.BookmarkAdd, contentDescription = null)
+                    Icon(if (added) LegadoIcons.Check else LegadoIcons.BookmarkAdd, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text(if (added) "已在书架" else "加书架")
                 }
 
                 Button(onClick = onReadNow) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Icon(LegadoIcons.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("阅读")
                 }

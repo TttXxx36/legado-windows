@@ -27,6 +27,9 @@ object AppDatabase {
     }
 
     init {
+        try {
+            Class.forName("org.sqlite.JDBC")
+        } catch (_: Throwable) {}
         initDatabase()
     }
 

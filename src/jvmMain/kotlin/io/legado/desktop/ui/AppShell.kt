@@ -12,11 +12,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.*
-import androidx.compose.material.icons.automirrored.outlined.*
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -295,7 +290,7 @@ fun BookshelfView(
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(LegadoIcons.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("导入本地书籍")
                 }
@@ -326,7 +321,7 @@ fun BookshelfView(
                         onClick = { importMessage = null },
                         modifier = Modifier.size(24.dp)
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "关闭", modifier = Modifier.size(16.dp))
+                        Icon(LegadoIcons.Close, contentDescription = "关闭", modifier = Modifier.size(16.dp))
                     }
                 }
             }
@@ -549,7 +544,7 @@ fun SourcesView(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { onDeleteSource(source) }) {
                                     Icon(
-                                        Icons.Default.Delete,
+                                        LegadoIcons.Delete,
                                         contentDescription = "删除书源",
                                         tint = MaterialTheme.colorScheme.error
                                     )
@@ -845,7 +840,7 @@ fun SettingsView(
                     }
 
                     Button(onClick = { showAddRuleDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(LegadoIcons.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("添加规则")
                     }
@@ -858,57 +853,65 @@ fun SettingsView(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    replaceRules.forEach { rule ->
-                        ElevatedCard(
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(replaceRules) { rule ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = rule.name,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "表达式: ${rule.pattern} → 替换: '${rule.replacement}'",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Switch(
-                                        checked = rule.isEnabled,
-                                        onCheckedChange = { isChecked ->
-                                            rule.isEnabled = isChecked
-                                            scope.launch {
-                                                AppDatabase.insertOrUpdateReplaceRule(rule)
-                                                replaceRules.clear()
-                                                replaceRules.addAll(AppDatabase.getReplaceRules())
-                                            }
-                                        }
-                                    )
-                                    IconButton(
-                                        onClick = {
-                                            scope.launch {
-                                                AppDatabase.deleteReplaceRule(rule.id)
-                                                replaceRules.remove(rule)
-                                            }
-                                        }
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "删除规则",
-                                            tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(20.dp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = rule.name,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold
                                         )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            text = "“${rule.pattern}” -> “${rule.replacement}”",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Switch(
+                                            checked = rule.isEnabled,
+                                            onCheckedChange = { isChecked ->
+                                                rule.isEnabled = isChecked
+                                                scope.launch {
+                                                    AppDatabase.insertOrUpdateReplaceRule(rule)
+                                                    replaceRules.clear()
+                                                    replaceRules.addAll(AppDatabase.getReplaceRules())
+                                                }
+                                            }
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        IconButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    AppDatabase.deleteReplaceRule(rule.id)
+                                                    replaceRules.remove(rule)
+                                                }
+                                            }
+                                        ) {
+                                            Icon(
+                                                LegadoIcons.Delete,
+                                                contentDescription = "删除规则",
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
