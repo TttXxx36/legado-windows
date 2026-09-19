@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "io.legado.desktop"
-version = "1.0.0"
+version = "1.1.0"
 
 kotlin {
     jvm("jvm") {
@@ -63,7 +63,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "LegadoDesktop"
-            packageVersion = "1.0.0"
+            packageVersion = "1.1.0"
             description = "Legado with MD3 for Windows"
             copyright = "© 2026 Legado Community"
             vendor = "Legado Open Source"
@@ -73,6 +73,7 @@ compose.desktop {
                 upgradeUuid = "a72513ea-4d83-4ee1-b753-1579899fa9b1"
                 dirChooser = true
                 perUserInstall = true
+                iconFile.set(project.file("src/jvmMain/resources/icon.ico"))
             }
         }
     }

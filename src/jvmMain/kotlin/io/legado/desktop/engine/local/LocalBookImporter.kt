@@ -62,6 +62,20 @@ object LocalBookImporter {
     }
 
     /**
+     * 智能统一导入入口：根据扩展名自动识别 .txt 或 .epub
+     */
+    suspend fun importBook(file: File): Book = withContext(Dispatchers.IO) {
+        if (file.extension.equals("epub", ignoreCase = true)) {
+            val result = EpubParser.parseEpub(file, localBooksDir)
+            AppDatabase.insertOrUpdateBook(result.book)
+            AppDatabase.saveChapters(result.book.bookUrl, result.chapters)
+            result.book
+        } else {
+            importTxtBook(file)
+        }
+    }
+
+    /**
      * 导入本地 TXT 小说，智能分章并持久化到本地数据库
      */
     suspend fun importTxtBook(file: File): Book = withContext(Dispatchers.IO) {

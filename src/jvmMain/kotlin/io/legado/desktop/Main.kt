@@ -8,7 +8,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.res.loadImageBitmap
+import androidx.compose.ui.res.useResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Notification
 import androidx.compose.ui.window.Tray
@@ -44,9 +47,17 @@ fun main() = application {
 
     val trayState = rememberTrayState()
 
+    val appIcon = try {
+        useResource("icon.png") { stream ->
+            BitmapPainter(loadImageBitmap(stream))
+        }
+    } catch (_: Exception) {
+        LegadoTrayIcon
+    }
+
     Tray(
         state = trayState,
-        icon = LegadoTrayIcon,
+        icon = appIcon,
         tooltip = "Legado (阅读) - Windows 原生桌面版",
         onAction = {
             isWindowVisible = true
@@ -74,6 +85,7 @@ fun main() = application {
         },
         visible = isWindowVisible,
         state = windowState,
+        icon = appIcon,
         title = "Legado (阅读) - Windows Native"
     ) {
         LegadoTheme(darkTheme = darkTheme) {

@@ -264,8 +264,10 @@ fun BookshelfView(
 
                 Button(
                     onClick = {
-                        val dialog = FileDialog(null as Frame?, "选择本地小说文件 (.txt)", FileDialog.LOAD)
-                        dialog.setFilenameFilter { _, name -> name.endsWith(".txt", ignoreCase = true) }
+                        val dialog = FileDialog(null as Frame?, "选择本地电子书 (.txt, .epub)", FileDialog.LOAD)
+                        dialog.setFilenameFilter { _, name ->
+                            name.endsWith(".txt", ignoreCase = true) || name.endsWith(".epub", ignoreCase = true)
+                        }
                         dialog.isVisible = true
                         val file = dialog.file
                         val dir = dialog.directory
@@ -275,9 +277,9 @@ fun BookshelfView(
                                 isImporting = true
                                 importMessage = null
                                 try {
-                                    val imported = LocalBookImporter.importTxtBook(selectedFile)
+                                    val imported = LocalBookImporter.importBook(selectedFile)
                                     onBookImported(imported)
-                                    importMessage = "《${imported.name}》导入成功，共解析生成 ${imported.totalChapterNum} 个章节！"
+                                    importMessage = "《${imported.name}》(${if (selectedFile.extension.equals("epub", true)) "EPUB" else "TXT"}) 导入成功，共生成 ${imported.totalChapterNum} 个章节！"
                                 } catch (e: Exception) {
                                     importMessage = "导入失败: ${e.message}"
                                 } finally {
