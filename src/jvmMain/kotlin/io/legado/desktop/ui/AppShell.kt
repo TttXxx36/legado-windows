@@ -33,9 +33,13 @@ import io.legado.desktop.data.model.BookSource
 import io.legado.desktop.data.model.ReplaceRule
 import io.legado.desktop.data.model.WebDavConfig
 import io.legado.desktop.engine.BookSourceEngine
+import io.legado.desktop.engine.local.LocalBookImporter
 import io.legado.desktop.engine.sync.WebDavSync
 import io.legado.desktop.server.LegadoWebServer
 import java.awt.Desktop
+import java.awt.FileDialog
+import java.awt.Frame
+import java.io.File
 import java.net.URI
 import kotlinx.coroutines.launch
 
@@ -173,6 +177,11 @@ fun AppShell(
                                     AppDatabase.deleteBook(book.bookUrl)
                                     books.remove(book)
                                 }
+                            },
+                            onBookImported = { importedBook ->
+                                if (!books.any { it.bookUrl == importedBook.bookUrl }) {
+                                    books.add(0, importedBook)
+                                }
                             }
                         )
                         NavDestination.DISCOVER -> SearchView(
@@ -211,8 +220,13 @@ fun AppShell(
 fun BookshelfView(
     books: List<Book>,
     onOpenBook: (Book) -> Unit,
-    onDeleteBook: (Book) -> Unit
+    onDeleteBook: (Book) -> Unit,
+    onBookImported: (Book) -> Unit = {}
 ) {
+    val scope = rememberCoroutineScope()
+    var isImporting by remember { mutableStateOf(false) }
+    var importMessage by remember { mutableStateOf<String?>(null) }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -232,9 +246,47 @@ fun BookshelfView(
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (isImporting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "正在分章导入...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+
                 Button(
-                    onClick = { /* TODO: 打开文件选择器 */ },
+                    onClick = {
+                        val dialog = FileDialog(null as Frame?, "选择本地小说文件 (.txt)", FileDialog.LOAD)
+                        dialog.setFilenameFilter { _, name -> name.endsWith(".txt", ignoreCase = true) }
+                        dialog.isVisible = true
+                        val file = dialog.file
+                        val dir = dialog.directory
+                        if (file != null && dir != null) {
+                            val selectedFile = File(dir, file)
+                            scope.launch {
+                                isImporting = true
+                                importMessage = null
+                                try {
+                                    val imported = LocalBookImporter.importTxtBook(selectedFile)
+                                    onBookImported(imported)
+                                    importMessage = "《${imported.name}》导入成功，共解析生成 ${imported.totalChapterNum} 个章节！"
+                                } catch (e: Exception) {
+                                    importMessage = "导入失败: ${e.message}"
+                                } finally {
+                                    isImporting = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isImporting,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -247,7 +299,37 @@ fun BookshelfView(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        if (importMessage != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                ),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = importMessage!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { importMessage = null },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭", modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         if (books.isEmpty()) {
             Box(

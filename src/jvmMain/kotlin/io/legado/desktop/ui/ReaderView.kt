@@ -33,6 +33,7 @@ import io.legado.desktop.data.model.Book
 import io.legado.desktop.data.model.BookChapter
 import io.legado.desktop.data.model.Bookmark
 import io.legado.desktop.engine.BookSourceEngine
+import io.legado.desktop.engine.local.LocalBookImporter
 import io.legado.desktop.engine.rule.ReplaceRuleEngine
 import io.legado.desktop.engine.tts.TtsEngine
 import kotlinx.coroutines.launch
@@ -110,7 +111,9 @@ fun ReaderView(
             val allSources = AppDatabase.getAllBookSources()
             val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
 
-            val raw = if (source != null) {
+            val raw = if (book.type == 3 || book.origin == "local") {
+                LocalBookImporter.loadChapterContent(chapter)
+            } else if (source != null) {
                 BookSourceEngine.getContent(source, book, chapter)
             } else {
                 """
