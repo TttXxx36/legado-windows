@@ -540,4 +540,30 @@ object AppDatabase {
             }
         }
     }
+
+    // --- General Key-Value Configuration ---
+    suspend fun getConfig(key: String, defaultValue: String = ""): String = withContext(Dispatchers.IO) {
+        var result = defaultValue
+        getConnection().use { conn ->
+            conn.prepareStatement("SELECT value FROM app_config WHERE key = ?").use { stmt ->
+                stmt.setString(1, key)
+                val rs = stmt.executeQuery()
+                if (rs.next()) {
+                    result = rs.getString("value")
+                }
+            }
+        }
+        result
+    }
+
+    suspend fun setConfig(key: String, value: String) = withContext(Dispatchers.IO) {
+        getConnection().use { conn ->
+            val sql = "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)"
+            conn.prepareStatement(sql).use { stmt ->
+                stmt.setString(1, key)
+                stmt.setString(2, value)
+                stmt.executeUpdate()
+            }
+        }
+    }
 }

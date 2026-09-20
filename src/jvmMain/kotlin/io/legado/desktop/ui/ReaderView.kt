@@ -30,11 +30,15 @@ import io.legado.desktop.data.model.Book
 import io.legado.desktop.data.model.BookChapter
 import io.legado.desktop.data.model.Bookmark
 import io.legado.desktop.engine.BookSourceEngine
+import io.legado.desktop.engine.hotkey.GlobalMediaHotkeyManager
 import io.legado.desktop.engine.local.LocalBookImporter
 import io.legado.desktop.engine.rule.ReplaceRuleEngine
 import io.legado.desktop.engine.tts.TtsEngine
+import io.legado.desktop.ui.font.FontManager
 import io.legado.desktop.ui.theme.LegadoIcons
 import kotlinx.coroutines.launch
+import javax.swing.JFileChooser
+import javax.swing.filechooser.FileNameExtensionFilter
 
 enum class ReadTheme(
     val nameZh: String,
@@ -66,6 +70,9 @@ fun ReaderView(
     var fontSize by remember { mutableStateOf(18) }
     var isDualPage by remember { mutableStateOf(false) }
     var currentTheme by remember { mutableStateOf(ReadTheme.DAY) }
+    var fontPath by remember { mutableStateOf<String?>(null) }
+    var fontName by remember { mutableStateOf("默认系统字体") }
+    val activeFontFamily = remember(fontPath) { FontManager.getFontFamily(fontPath) }
     var showTOC by remember { mutableStateOf(false) }
     var tocTabIndex by remember { mutableStateOf(0) } // 0: 目录, 1: 书签
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -79,8 +86,15 @@ fun ReaderView(
     var isTtsPlaying by remember { mutableStateOf(false) }
     var ttsRate by remember { mutableStateOf(0) }
 
-    // Load chapters, bookmarks & content
+    // Load chapters, bookmarks & preferences
     LaunchedEffect(book.bookUrl) {
+        val savedPath = AppDatabase.getConfig("reader_font_path", "")
+        val savedName = AppDatabase.getConfig("reader_font_name", "默认系统字体")
+        if (savedPath.isNotBlank()) {
+            fontPath = savedPath
+            fontName = savedName
+        }
+
         val loadedChapters = AppDatabase.getChapters(book.bookUrl)
         if (loadedChapters.isNotEmpty()) {
             chapters = loadedChapters
@@ -145,9 +159,42 @@ fun ReaderView(
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(currentChapterIndex, chapters, isTtsActive, isTtsPlaying, chapterContent, ttsRate) {
+        val prevPlayPause = GlobalMediaHotkeyManager.onPlayPause
+        val prevNext = GlobalMediaHotkeyManager.onNext
+        val prevPrev = GlobalMediaHotkeyManager.onPrev
+
+        GlobalMediaHotkeyManager.onPlayPause = {
+            if (isTtsActive) {
+                if (isTtsPlaying) {
+                    TtsEngine.pause()
+                    isTtsPlaying = false
+                } else {
+                    TtsEngine.resume()
+                    isTtsPlaying = true
+                }
+            } else {
+                isTtsActive = true
+                isTtsPlaying = true
+                TtsEngine.speak(chapterContent, ttsRate)
+            }
+        }
+        GlobalMediaHotkeyManager.onNext = {
+            if (currentChapterIndex < chapters.size - 1) {
+                currentChapterIndex++
+            }
+        }
+        GlobalMediaHotkeyManager.onPrev = {
+            if (currentChapterIndex > 0) {
+                currentChapterIndex--
+            }
+        }
+
         onDispose {
             TtsEngine.stop()
+            GlobalMediaHotkeyManager.onPlayPause = prevPlayPause
+            GlobalMediaHotkeyManager.onNext = prevNext
+            GlobalMediaHotkeyManager.onPrev = prevPrev
         }
     }
 
@@ -301,7 +348,8 @@ fun ReaderView(
                             fontSize = fontSize.sp,
                             lineHeight = (fontSize * 1.7).sp,
                             color = currentTheme.text,
-                            letterSpacing = 0.5.sp
+                            letterSpacing = 0.5.sp,
+                            fontFamily = activeFontFamily
                         )
                     }
                     VerticalDivider(color = currentTheme.text.copy(alpha = 0.15f))
@@ -314,7 +362,8 @@ fun ReaderView(
                             text = "【双页模式 - 右栏页签】\n\n当前正文共 ${chapterContent.length} 字。\n已启用 Legado 净化过滤规则。\n翻页可使用 Space / 方向键 / PageDown。\n点击页面任意空白处可显示/隐藏顶部与底部阅读面板。",
                             fontSize = fontSize.sp,
                             lineHeight = (fontSize * 1.7).sp,
-                            color = currentTheme.text.copy(alpha = 0.7f)
+                            color = currentTheme.text.copy(alpha = 0.7f),
+                            fontFamily = activeFontFamily
                         )
                     }
                 }
@@ -331,7 +380,8 @@ fun ReaderView(
                         text = currentChapterTitle,
                         fontSize = (fontSize + 6).sp,
                         fontWeight = FontWeight.Bold,
-                        color = currentTheme.text
+                        color = currentTheme.text,
+                        fontFamily = activeFontFamily
                     )
                     Spacer(Modifier.height(24.dp))
                     Text(
@@ -339,7 +389,8 @@ fun ReaderView(
                         fontSize = fontSize.sp,
                         lineHeight = (fontSize * 1.75).sp,
                         color = currentTheme.text,
-                        letterSpacing = 0.6.sp
+                        letterSpacing = 0.6.sp,
+                        fontFamily = activeFontFamily
                     )
                     Spacer(Modifier.height(80.dp))
                 }
@@ -728,6 +779,71 @@ fun ReaderView(
                             }
                             FilledTonalButton(onClick = { if (fontSize < 36) fontSize += 2 }) {
                                 Text("A +")
+                            }
+                        }
+
+                        HorizontalDivider()
+
+                        Text("正文字体排版: $fontName", style = MaterialTheme.typography.bodyMedium)
+
+                        var fontDropdownExpanded by remember { mutableStateOf(false) }
+                        val systemFonts = remember { FontManager.getAvailableSystemFonts() }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                OutlinedButton(
+                                    onClick = { fontDropdownExpanded = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(fontName, maxLines = 1)
+                                }
+                                DropdownMenu(
+                                    expanded = fontDropdownExpanded,
+                                    onDismissRequest = { fontDropdownExpanded = false }
+                                ) {
+                                    systemFonts.forEach { opt ->
+                                        DropdownMenuItem(
+                                            text = { Text(opt.name) },
+                                            onClick = {
+                                                fontPath = opt.path
+                                                fontName = opt.name
+                                                fontDropdownExpanded = false
+                                                scope.launch {
+                                                    AppDatabase.setConfig("reader_font_path", opt.path ?: "")
+                                                    AppDatabase.setConfig("reader_font_name", opt.name)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    val chooser = JFileChooser().apply {
+                                        dialogTitle = "选择外部字体文件 (.ttf / .otf)"
+                                        fileFilter = FileNameExtensionFilter("字体文件 (*.ttf, *.otf)", "ttf", "otf")
+                                        isAcceptAllFileFilterUsed = false
+                                    }
+                                    val res = chooser.showOpenDialog(null)
+                                    if (res == JFileChooser.APPROVE_OPTION) {
+                                        val selectedFile = chooser.selectedFile
+                                        if (selectedFile != null && selectedFile.exists()) {
+                                            fontPath = selectedFile.absolutePath
+                                            fontName = selectedFile.nameWithoutExtension
+                                            scope.launch {
+                                                AppDatabase.setConfig("reader_font_path", selectedFile.absolutePath)
+                                                AppDatabase.setConfig("reader_font_name", selectedFile.nameWithoutExtension)
+                                            }
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text("自定义字体...")
                             }
                         }
 

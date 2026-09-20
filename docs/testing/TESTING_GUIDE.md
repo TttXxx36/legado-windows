@@ -19,7 +19,7 @@
 
 ---
 
-## 2. 自动化单元测试用例矩阵 (13/13 100% 通过)
+## 2. 自动化单元测试用例矩阵 (18/18 100% 通过)
 
 | 测试类 (Test Class) | 测试用例方法 | 验证领域与断言目标 | 执行耗时 |
 | :--- | :--- | :--- | :--- |
@@ -37,6 +37,11 @@
 | | `testImportAndReadTxtBook` | 验证本地 TXT 文件从物理分章切片、数据库入库到阅读器读取正文全流程 | ~49 ms |
 | **`EpubParserTest`** | `testEpubImportAndChapterParsing` | 验证标准 EPUB 容器包（`container.xml`, `content.opf`, XHTML）解包与章节解析 | ~30 ms |
 | **`GenerateIconTest`** | `generateIcons` | 验证 256x256 高清 PNG 与标准 Windows ICO 文件格式头与字节流生成 | ~60 ms |
+| **`Phase6FeatureTest`** | `testExploreKindParsingTextFormat` | 验证 Legado 3.0 发现规则多行文本格式分类与分页 URL 提取 | ~3 ms |
+| | `testExploreKindParsingJsonFormat` | 验证 JSON 数组格式发现分类与 `{{page}}` 分页宏提取 | ~3 ms |
+| | `testFontManagerPresetsAndResolution` | 验证默认、衬线、无衬线、等宽字体回退与 Windows 系统字体探测解析 | ~8 ms |
+| | `testAppDatabaseConfigStorage` | 验证通用键值配置库（排版字体选择、全局热键开关）持久化提取 | ~12 ms |
+| | `testGlobalMediaHotkeyManagerLifecycle` | 验证 Win32 原生全局硬件多媒体热键控制器的启动、停止与监听回调生命周期 | ~5 ms |
 
 ---
 

@@ -28,6 +28,7 @@ import io.legado.desktop.data.model.BookSource
 import io.legado.desktop.data.model.ReplaceRule
 import io.legado.desktop.data.model.WebDavConfig
 import io.legado.desktop.engine.BookSourceEngine
+import io.legado.desktop.engine.hotkey.GlobalMediaHotkeyManager
 import io.legado.desktop.engine.local.LocalBookImporter
 import io.legado.desktop.engine.sync.WebDavSync
 import io.legado.desktop.server.LegadoWebServer
@@ -99,6 +100,11 @@ fun AppShell(
 
         val loadedSources = AppDatabase.getAllBookSources()
         sources.addAll(loadedSources)
+
+        val hotkeyEnabled = AppDatabase.getConfig("global_media_hotkey_enabled", "true") == "true"
+        if (hotkeyEnabled) {
+            GlobalMediaHotkeyManager.start()
+        }
     }
 
     if (activeReadingBook != null) {
@@ -180,7 +186,8 @@ fun AppShell(
                                 }
                             }
                         )
-                        NavDestination.DISCOVER -> SearchView(
+                        NavDestination.DISCOVER -> DiscoverView(
+                            sources = sources,
                             onOpenBook = { book -> activeReadingBook = book },
                             onBookAddedToShelf = { book ->
                                 if (!books.any { it.bookUrl == book.bookUrl }) {
@@ -635,6 +642,8 @@ fun SettingsView(
     var newRulePattern by remember { mutableStateOf("") }
     var newRuleReplacement by remember { mutableStateOf("") }
 
+    var isHotkeyEnabled by remember { mutableStateOf(GlobalMediaHotkeyManager.isEnabled) }
+
     LaunchedEffect(Unit) {
         val config = AppDatabase.getWebDavConfig()
         webDavUrl = config.url
@@ -645,6 +654,8 @@ fun SettingsView(
         val loadedRules = AppDatabase.getReplaceRules()
         replaceRules.clear()
         replaceRules.addAll(loadedRules)
+
+        isHotkeyEnabled = AppDatabase.getConfig("global_media_hotkey_enabled", "true") == "true"
     }
 
     Column(
@@ -985,7 +996,59 @@ fun SettingsView(
             }
         }
 
-        // 5. Local Database Storage Card
+        // 5. Global Media Hotkeys Card
+        OutlinedCard(
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "全局多媒体硬件按键 & 快捷键",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "允许在窗口最小化或后台听书时，直接响应键盘媒体键或组合键",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Switch(
+                        checked = isHotkeyEnabled,
+                        onCheckedChange = { enable ->
+                            isHotkeyEnabled = enable
+                            scope.launch {
+                                AppDatabase.setConfig("global_media_hotkey_enabled", enable.toString())
+                                if (enable) {
+                                    GlobalMediaHotkeyManager.start()
+                                } else {
+                                    GlobalMediaHotkeyManager.stop()
+                                }
+                            }
+                        }
+                    )
+                }
+
+                Text(
+                    text = "• 播放 / 暂停: 键盘 [Play/Pause] 键 或 [Ctrl + Alt + 空格]\n• 下一章 / 快进: 键盘 [Next Track] 键 或 [Ctrl + Alt + 右方向键]\n• 上一章 / 后退: 键盘 [Prev Track] 键 或 [Ctrl + Alt + 左方向键]",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        // 6. Local Database Storage Card
         OutlinedCard(
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth()
@@ -998,14 +1061,14 @@ fun SettingsView(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "数据库路径: %APPDATA%\\LegadoDesktop\\legado.db\n存储引擎: SQLite 3 (JDBC Direct Connection)\n包含模块: 书籍、章节、书源、书签笔记、替换净化、应用配置",
+                    text = "数据库路径: %APPDATA%\\LegadoDesktop\\legado.db\n存储引擎: SQLite 3 (JDBC Direct Connection)\n包含模块: 书籍、章节、书源、发现规则、排版偏好、书签笔记、替换净化、应用配置",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // 5. About Card
+        // 7. About Card
         OutlinedCard(
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth()
@@ -1018,7 +1081,7 @@ fun SettingsView(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "版本: 1.1.0 (Phase 2 全量集成)\n技术架构: Compose Multiplatform + Material Design 3 + Windows SAPI\n移植自: HapeLee/legado-with-MD3 & gedoor/legado\n开源协议: GPL-3.0",
+                    text = "版本: 1.2.0 (Phase 6 发现引擎/全系统字体排版/全局多媒体热键)\n技术架构: Compose Multiplatform + Material Design 3 + Windows SAPI\n移植自: HapeLee/legado-with-MD3 & gedoor/legado\n开源协议: GPL-3.0",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

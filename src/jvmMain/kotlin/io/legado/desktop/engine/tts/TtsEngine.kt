@@ -9,9 +9,17 @@ object TtsEngine {
     var isSpeaking: Boolean = false
         private set
 
+    private var lastText: String = ""
+    private var lastRate: Int = 0
+
+    fun isPlaying(): Boolean = isSpeaking
+
     fun speak(text: String, rate: Int = 0) {
         stop()
         if (text.isBlank()) return
+
+        lastText = text
+        lastRate = rate
 
         val cleanText = text.take(1500)
             .replace("`", " ")
@@ -43,6 +51,16 @@ object TtsEngine {
         } catch (e: Exception) {
             isSpeaking = false
             currentProcess = null
+        }
+    }
+
+    fun pause() {
+        stop()
+    }
+
+    fun resume() {
+        if (lastText.isNotBlank()) {
+            speak(lastText, lastRate)
         }
     }
 
