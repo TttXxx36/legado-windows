@@ -19,7 +19,7 @@
 
 ---
 
-## 2. 自动化单元测试用例矩阵 (18/18 100% 通过)
+## 2. 自动化单元测试用例矩阵 (39/39 100% 通过)
 
 | 测试类 (Test Class) | 测试用例方法 | 验证领域与断言目标 | 执行耗时 |
 | :--- | :--- | :--- | :--- |
@@ -42,6 +42,23 @@
 | | `testFontManagerPresetsAndResolution` | 验证默认、衬线、无衬线、等宽字体回退与 Windows 系统字体探测解析 | ~8 ms |
 | | `testAppDatabaseConfigStorage` | 验证通用键值配置库（排版字体选择、全局热键开关）持久化提取 | ~12 ms |
 | | `testGlobalMediaHotkeyManagerLifecycle` | 验证 Win32 原生全局硬件多媒体热键控制器的启动、停止与监听回调生命周期 | ~5 ms |
+| **`SearchRelevanceEngineTest`** | `testExactTitleMatchRanksFirst` | 验证搜索书名精准匹配置顶（分值超 100,000）与衍生作自动后置 | ~4 ms |
+| | `testPunctuationStrippedMatch` | 验证《》书名号与特殊标点剔除归一化匹配 | ~2 ms |
+| | `testAuthorMatchBoost` | 验证按作者搜索时的专属加权机制 | ~2 ms |
+| | `testScoreCalculationDirectly` | 验证封面/简介/最新章节信息完整度加权与空壳书籍惩罚 | ~3 ms |
+| **`RuleAnalyzerAdvancedTest`** | `testDirectAttrExtraction` | 验证 href、text 等原生属性直接提取，规避标签误判 | ~5 ms |
+| | `testAlternativeRuleFallback` | 验证 `||` 语法多候选规则依次降级容错提取 | ~4 ms |
+| | `testAtChainAndDirectAttributes` | 验证 `@` 复杂选择链式下钻与 DOM 逐级提取 | ~6 ms |
+| | `testPositionalIndexAndNegativeIndex` | 验证 `-1` 逆向尾项与 `0` 首项位置索引抽取 | ~4 ms |
+| | `testRegexReplacement` | 验证 `##` 正则替换语法过滤正文尾注与广告文本 | ~3 ms |
+| | `testResolveUrl` | 验证相对 URL 与全网绝对地址的自动补全解析 | ~2 ms |
+| **`BookSourceImportTest`** | `testParseStandardArray` | 验证标准 Legado 3.0 书源 JSON 数组反序列化 | ~8 ms |
+| | `testParseSingleObject` | 验证单条书源 JSON 对象的智能识别解析 | ~3 ms |
+| | `testParseApiEnvelopeDataArray` | 验证聚合平台常见 `{ "data": [ ... ] }` 嵌套解包提取 | ~5 ms |
+| | `testParseEnvelopeListArray` | 验证常见 `{ "list": [ ... ] }` 嵌套解包提取 | ~3 ms |
+| | `testResilientSkipCorruptedElements` | 验证单项损坏时防御性跳过，最大化抢救有效书源 | ~6 ms |
+| **`ClickZoneEngineTest`** | `testClickZoneActionFromId` | 验证点击动作 ID 枚举查找与默认回退保护 | ~1 ms |
+| | `testClickZoneCoordinatePartition` | 验证 25:50:25 与 33:34:33 比例下的横坐标点击命中算法 | ~2 ms |
 
 ---
 
