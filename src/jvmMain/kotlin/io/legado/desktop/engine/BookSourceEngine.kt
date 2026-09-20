@@ -8,6 +8,9 @@ import io.legado.desktop.engine.rule.RuleAnalyzer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
@@ -20,16 +23,74 @@ object BookSourceEngine {
 
     fun parseBookSources(jsonString: String): List<BookSource> {
         val trimmed = jsonString.trim()
-        return try {
+        if (trimmed.isBlank()) return emptyList()
+
+        // 1. Direct fast attempt
+        try {
             if (trimmed.startsWith("[")) {
-                json.decodeFromString<List<BookSource>>(trimmed)
-            } else {
-                listOf(json.decodeFromString<BookSource>(trimmed))
+                return json.decodeFromString<List<BookSource>>(trimmed)
+            } else if (trimmed.startsWith("{")) {
+                val rootElement = json.parseToJsonElement(trimmed)
+                if (rootElement is JsonObject) {
+                    val arrayCandidate = rootElement["data"]?.let { if (it is JsonArray) it else (it as? JsonObject)?.get("list") }
+                        ?: rootElement["list"]
+                        ?: rootElement["sources"]
+                        ?: rootElement["bookSources"]
+
+                    if (arrayCandidate is JsonArray) {
+                        return decodeSafeList(arrayCandidate)
+                    }
+                    return listOf(json.decodeFromJsonElement<BookSource>(rootElement))
+                }
             }
+        } catch (_: Exception) {
+            // Fall through to safe element recovery
+        }
+
+        // 2. Safe element-by-element recovery
+        return try {
+            val root = json.parseToJsonElement(trimmed)
+            if (root is JsonArray) {
+                decodeSafeList(root)
+            } else if (root is JsonObject) {
+                val arrayCandidate = root["data"] ?: root["list"] ?: root["sources"]
+                if (arrayCandidate is JsonArray) {
+                    decodeSafeList(arrayCandidate)
+                } else {
+                    listOfNotNull(try { json.decodeFromJsonElement<BookSource>(root) } catch (_: Exception) { null })
+                }
+            } else emptyList()
         } catch (e: Exception) {
             System.err.println("Failed to parse book sources: ${e.message}")
             emptyList()
         }
+    }
+
+    private fun decodeSafeList(array: JsonArray): List<BookSource> {
+        val result = mutableListOf<BookSource>()
+        for (element in array) {
+            try {
+                val source = json.decodeFromJsonElement<BookSource>(element)
+                if (source.bookSourceName.isNotBlank() && source.bookSourceUrl.isNotBlank()) {
+                    result.add(source)
+                }
+            } catch (_: Exception) {
+                // Skip invalid individual element to salvage the rest
+            }
+        }
+        return result
+    }
+
+    suspend fun importFromUrl(url: String): List<BookSource> = withContext(Dispatchers.IO) {
+        val targetUrl = url.trim()
+        if (targetUrl.isBlank()) return@withContext emptyList()
+        val content = try {
+            HttpHelper.smartRequest(targetUrl, targetUrl)
+        } catch (e: Exception) {
+            System.err.println("Failed to fetch book sources from URL $targetUrl: ${e.message}")
+            return@withContext emptyList()
+        }
+        parseBookSources(content)
     }
 
     suspend fun search(

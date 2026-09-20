@@ -36,8 +36,12 @@ import io.legado.desktop.ui.theme.LegadoIcons
 import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
+import java.awt.Toolkit
+import java.awt.datatransfer.DataFlavor
 import java.io.File
 import java.net.URI
+import javax.swing.JFileChooser
+import javax.swing.filechooser.FileNameExtensionFilter
 import kotlinx.coroutines.launch
 
 enum class NavDestination(
@@ -453,15 +457,41 @@ fun DiscoverView() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SourcesView(
     sources: List<BookSource>,
     onAddSources: (List<BookSource>) -> Unit,
     onDeleteSource: (BookSource) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var showImportDialog by remember { mutableStateOf(false) }
+    var importTabIndex by remember { mutableStateOf(0) } // 0: 网络在线, 1: 本地文件, 2: 剪贴板/粘贴
+
+    // Tab 0: Online URL
+    var importUrlText by remember { mutableStateOf("") }
+    var isFetchingUrl by remember { mutableStateOf(false) }
+
+    // Tab 1: Local File
+    var selectedFileName by remember { mutableStateOf<String?>(null) }
+    var selectedFileContent by remember { mutableStateOf<String?>(null) }
+
+    // Tab 2: Manual / Clipboard JSON
     var importJsonText by remember { mutableStateOf("") }
+
     var importError by remember { mutableStateOf<String?>(null) }
+    var importSuccessMessage by remember { mutableStateOf<String?>(null) }
+
+    fun getClipboardString(): String? {
+        return try {
+            val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+            if (clipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)) {
+                clipboard.getData(DataFlavor.stringFlavor) as? String
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -482,7 +512,11 @@ fun SourcesView(
                 )
             }
 
-            Button(onClick = { showImportDialog = true }) {
+            Button(onClick = {
+                showImportDialog = true
+                importError = null
+                importSuccessMessage = null
+            }) {
                 Icon(LegadoIcons.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("导入书源")
@@ -505,7 +539,7 @@ fun SourcesView(
                     )
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        text = "暂无书源，点击右上角“导入书源”粘贴 Legado 3.0 JSON",
+                        text = "暂无书源，点击右上角“导入书源”通过网络链接、本地文件或剪贴板导入",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -566,26 +600,194 @@ fun SourcesView(
 
     if (showImportDialog) {
         AlertDialog(
-            onDismissRequest = { showImportDialog = false },
-            title = { Text("导入 Legado 3.0 书源") },
+            onDismissRequest = {
+                if (!isFetchingUrl) showImportDialog = false
+            },
+            title = {
+                Text(
+                    text = "导入 Legado 3.0 书源",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "粘贴 Legado 书源 JSON 内容（支持单个或数组）：",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    OutlinedTextField(
-                        value = importJsonText,
-                        onValueChange = {
-                            importJsonText = it
-                            importError = null
-                        },
-                        placeholder = { Text("[ { \"bookSourceName\": \"示例书源\", ... } ]") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(200.dp),
-                        isError = importError != null
-                    )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    PrimaryTabRow(selectedTabIndex = importTabIndex) {
+                        Tab(
+                            selected = importTabIndex == 0,
+                            onClick = { importTabIndex = 0; importError = null },
+                            text = { Text("网络在线导入") }
+                        )
+                        Tab(
+                            selected = importTabIndex == 1,
+                            onClick = { importTabIndex = 1; importError = null },
+                            text = { Text("本地文件导入") }
+                        )
+                        Tab(
+                            selected = importTabIndex == 2,
+                            onClick = { importTabIndex = 2; importError = null },
+                            text = { Text("剪贴板/粘贴") }
+                        )
+                    }
+
+                    when (importTabIndex) {
+                        0 -> {
+                            // Online URL Import Tab
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    text = "输入书源链接（支持 Legado 一键导入接口、网络 JSON 合集链接或 CDN 地址）：",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                OutlinedTextField(
+                                    value = importUrlText,
+                                    onValueChange = {
+                                        importUrlText = it
+                                        importError = null
+                                    },
+                                    placeholder = { Text("https://example.com/sources.json 或书源合集链接") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = false,
+                                    maxLines = 3,
+                                    isError = importError != null
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val clip = getClipboardString()?.trim()
+                                            if (!clip.isNullOrBlank() && (clip.startsWith("http://") || clip.startsWith("https://"))) {
+                                                importUrlText = clip
+                                                importError = null
+                                            } else {
+                                                importError = "剪贴板中未找到以 http(s):// 开头的网址"
+                                            }
+                                        }
+                                    ) {
+                                        Icon(LegadoIcons.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("粘贴剪贴板网址")
+                                    }
+
+                                    if (isFetchingUrl) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                            Text("正在拉取远程书源...", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        1 -> {
+                            // Local File Import Tab
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(
+                                    text = "选择存储在本地电脑中的 Legado 3.0 书源文件（.json 或 .txt）：",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                OutlinedButton(
+                                    onClick = {
+                                        val chooser = JFileChooser().apply {
+                                            dialogTitle = "选择本地 Legado 书源文件"
+                                            fileFilter = FileNameExtensionFilter("书源文件 (*.json, *.txt)", "json", "txt")
+                                            isMultiSelectionEnabled = false
+                                        }
+                                        val res = chooser.showOpenDialog(null)
+                                        if (res == JFileChooser.APPROVE_OPTION && chooser.selectedFile != null) {
+                                            val f = chooser.selectedFile
+                                            try {
+                                                val content = f.readText(Charsets.UTF_8)
+                                                selectedFileName = f.name
+                                                selectedFileContent = content
+                                                importError = null
+                                            } catch (e: Exception) {
+                                                importError = "读取文件失败: ${e.message}"
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(LegadoIcons.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(if (selectedFileName == null) "浏览并选择本地书源文件..." else "重新选择文件")
+                                }
+
+                                if (selectedFileName != null) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Text(
+                                                text = "已选文件：$selectedFileName",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                                            )
+                                            val previewList = selectedFileContent?.let { BookSourceEngine.parseBookSources(it) } ?: emptyList()
+                                            Text(
+                                                text = "文件大小: ${(selectedFileContent?.toByteArray(Charsets.UTF_8)?.size ?: 0) / 1024} KB  |  预估可解析: ${previewList.size} 个有效书源",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        2 -> {
+                            // Clipboard / Manual JSON Tab
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "粘贴书源 JSON 源码（支持单个对象或数组）：",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            val clip = getClipboardString()?.trim()
+                                            if (!clip.isNullOrBlank()) {
+                                                importJsonText = clip
+                                                importError = null
+                                            } else {
+                                                importError = "剪贴板为空或未包含文本"
+                                            }
+                                        }
+                                    ) {
+                                        Icon(LegadoIcons.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("一键贴入")
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = importJsonText,
+                                    onValueChange = {
+                                        importJsonText = it
+                                        importError = null
+                                    },
+                                    placeholder = { Text("[ { \"bookSourceName\": \"示例书源\", \"bookSourceUrl\": \"...\" } ]") },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(180.dp),
+                                    isError = importError != null
+                                )
+                            }
+                        }
+                    }
+
                     if (importError != null) {
                         Text(
                             text = importError ?: "",
@@ -597,22 +799,74 @@ fun SourcesView(
             },
             confirmButton = {
                 Button(
+                    enabled = !isFetchingUrl,
                     onClick = {
-                        val parsed = BookSourceEngine.parseBookSources(importJsonText)
-                        if (parsed.isEmpty()) {
-                            importError = "未能识别有效的书源 JSON，请检查格式"
-                        } else {
-                            onAddSources(parsed)
-                            showImportDialog = false
-                            importJsonText = ""
+                        when (importTabIndex) {
+                            0 -> {
+                                if (importUrlText.isBlank()) {
+                                    importError = "请输入有效的书源网络链接"
+                                    return@Button
+                                }
+                                scope.launch {
+                                    isFetchingUrl = true
+                                    importError = null
+                                    try {
+                                        val fetched = BookSourceEngine.importFromUrl(importUrlText)
+                                        if (fetched.isEmpty()) {
+                                            importError = "未能从该网址获取到有效书源，请检查链接或网络访问"
+                                        } else {
+                                            onAddSources(fetched)
+                                            showImportDialog = false
+                                            importUrlText = ""
+                                        }
+                                    } catch (e: Exception) {
+                                        importError = "拉取书源异常: ${e.localizedMessage ?: e.message}"
+                                    } finally {
+                                        isFetchingUrl = false
+                                    }
+                                }
+                            }
+                            1 -> {
+                                val content = selectedFileContent
+                                if (content.isNullOrBlank()) {
+                                    importError = "请先选择有效的书源文件"
+                                    return@Button
+                                }
+                                val parsed = BookSourceEngine.parseBookSources(content)
+                                if (parsed.isEmpty()) {
+                                    importError = "所选文件中未能识别到有效的 Legado 3.0 书源"
+                                } else {
+                                    onAddSources(parsed)
+                                    showImportDialog = false
+                                    selectedFileName = null
+                                    selectedFileContent = null
+                                }
+                            }
+                            2 -> {
+                                if (importJsonText.isBlank()) {
+                                    importError = "请输入或粘贴书源 JSON 内容"
+                                    return@Button
+                                }
+                                val parsed = BookSourceEngine.parseBookSources(importJsonText)
+                                if (parsed.isEmpty()) {
+                                    importError = "未能识别有效的书源 JSON，请检查格式"
+                                } else {
+                                    onAddSources(parsed)
+                                    showImportDialog = false
+                                    importJsonText = ""
+                                }
+                            }
                         }
                     }
                 ) {
-                    Text("确认导入")
+                    Text(if (isFetchingUrl) "正在解析..." else "确认导入")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showImportDialog = false }) {
+                TextButton(
+                    enabled = !isFetchingUrl,
+                    onClick = { showImportDialog = false }
+                ) {
                     Text("取消")
                 }
             }

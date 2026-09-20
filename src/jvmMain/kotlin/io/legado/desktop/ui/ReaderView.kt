@@ -25,6 +25,9 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import io.legado.desktop.data.model.ClickZoneAction
 import io.legado.desktop.data.db.AppDatabase
 import io.legado.desktop.data.model.Book
 import io.legado.desktop.data.model.BookChapter
@@ -76,7 +79,73 @@ fun ReaderView(
     var showTOC by remember { mutableStateOf(false) }
     var tocTabIndex by remember { mutableStateOf(0) } // 0: 目录, 1: 书签
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var settingsTabIndex by remember { mutableStateOf(0) } // 0: 排版与主题, 1: 翻页与屏幕触控
     var showHud by remember { mutableStateOf(true) }
+
+    // Immersive / Fullscreen State
+    var isImmersive by remember { mutableStateOf(false) }
+
+    // Screen Click Zones Preferences
+    var leftClickAction by remember { mutableStateOf(ClickZoneAction.PAGE_PREV) }
+    var centerClickAction by remember { mutableStateOf(ClickZoneAction.TOGGLE_MENU) }
+    var rightClickAction by remember { mutableStateOf(ClickZoneAction.PAGE_NEXT) }
+    var clickRatioIndex by remember { mutableStateOf(0) } // 0: 25-50-25, 1: 33-34-33, 2: 20-60-20
+
+    val (leftRatio, rightRatio) = remember(clickRatioIndex) {
+        when (clickRatioIndex) {
+            1 -> Pair(0.333f, 0.333f)
+            2 -> Pair(0.20f, 0.20f)
+            else -> Pair(0.25f, 0.25f)
+        }
+    }
+
+    fun executeAction(action: ClickZoneAction) {
+        when (action) {
+            ClickZoneAction.PAGE_PREV -> {
+                scope.launch {
+                    val viewportH = scrollState.viewportSize
+                    val step = if (viewportH > 0) (viewportH * 0.85f).toInt() else 600
+                    if (scrollState.value > 0) {
+                        scrollState.animateScrollTo((scrollState.value - step).coerceAtLeast(0))
+                    } else if (currentChapterIndex > 0) {
+                        currentChapterIndex--
+                    }
+                }
+            }
+            ClickZoneAction.PAGE_NEXT -> {
+                scope.launch {
+                    val viewportH = scrollState.viewportSize
+                    val step = if (viewportH > 0) (viewportH * 0.85f).toInt() else 600
+                    if (scrollState.value < scrollState.maxValue) {
+                        scrollState.animateScrollTo((scrollState.value + step).coerceAtMost(scrollState.maxValue))
+                    } else if (currentChapterIndex < chapters.size - 1) {
+                        currentChapterIndex++
+                    }
+                }
+            }
+            ClickZoneAction.TOGGLE_MENU -> {
+                showHud = !showHud
+            }
+            ClickZoneAction.PREV_CHAPTER -> {
+                if (currentChapterIndex > 0) currentChapterIndex--
+            }
+            ClickZoneAction.NEXT_CHAPTER -> {
+                if (currentChapterIndex < chapters.size - 1) currentChapterIndex++
+            }
+            ClickZoneAction.OPEN_TOC -> {
+                showTOC = true
+            }
+            ClickZoneAction.TOGGLE_THEME -> {
+                currentTheme = when (currentTheme) {
+                    ReadTheme.DAY -> ReadTheme.PARCHMENT
+                    ReadTheme.PARCHMENT -> ReadTheme.GREEN
+                    ReadTheme.GREEN -> ReadTheme.NIGHT
+                    ReadTheme.NIGHT -> ReadTheme.DAY
+                }
+            }
+            ClickZoneAction.NONE -> {}
+        }
+    }
 
     // Bookmarks State
     val bookBookmarks = remember { mutableStateListOf<Bookmark>() }
@@ -94,6 +163,16 @@ fun ReaderView(
             fontPath = savedPath
             fontName = savedName
         }
+
+        val savedLeft = AppDatabase.getConfig("reader_click_left_action", ClickZoneAction.PAGE_PREV.id)
+        val savedCenter = AppDatabase.getConfig("reader_click_center_action", ClickZoneAction.TOGGLE_MENU.id)
+        val savedRight = AppDatabase.getConfig("reader_click_right_action", ClickZoneAction.PAGE_NEXT.id)
+        val savedRatio = AppDatabase.getConfig("reader_click_ratio", "0").toIntOrNull() ?: 0
+
+        leftClickAction = ClickZoneAction.fromId(savedLeft, ClickZoneAction.PAGE_PREV)
+        centerClickAction = ClickZoneAction.fromId(savedCenter, ClickZoneAction.TOGGLE_MENU)
+        rightClickAction = ClickZoneAction.fromId(savedRight, ClickZoneAction.PAGE_NEXT)
+        clickRatioIndex = savedRatio
 
         val loadedChapters = AppDatabase.getChapters(book.bookUrl)
         if (loadedChapters.isNotEmpty()) {
@@ -284,21 +363,27 @@ fun ReaderView(
             .onKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
                     when (event.key) {
+                        Key.F11 -> {
+                            isImmersive = !isImmersive
+                            if (isImmersive) showHud = false
+                            true
+                        }
                         Key.DirectionRight, Key.PageDown, Key.Spacebar -> {
-                            if (currentChapterIndex < chapters.size - 1) {
-                                currentChapterIndex++
-                                true
-                            } else false
+                            executeAction(ClickZoneAction.PAGE_NEXT)
+                            true
                         }
                         Key.DirectionLeft, Key.PageUp -> {
-                            if (currentChapterIndex > 0) {
-                                currentChapterIndex--
-                                true
-                            } else false
+                            executeAction(ClickZoneAction.PAGE_PREV)
+                            true
                         }
                         Key.Escape -> {
-                            handleClose()
-                            true
+                            if (isImmersive) {
+                                isImmersive = false
+                                true
+                            } else {
+                                handleClose()
+                                true
+                            }
                         }
                         else -> false
                     }
@@ -309,7 +394,19 @@ fun ReaderView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable { showHud = !showHud },
+                .pointerInput(leftClickAction, centerClickAction, rightClickAction, leftRatio, rightRatio) {
+                    detectTapGestures { offset ->
+                        val x = offset.x
+                        val totalW = size.width
+                        val leftBorder = totalW * leftRatio
+                        val rightBorder = totalW * (1f - rightRatio)
+                        when {
+                            x < leftBorder -> executeAction(leftClickAction)
+                            x > rightBorder -> executeAction(rightClickAction)
+                            else -> executeAction(centerClickAction)
+                        }
+                    }
+                },
             contentAlignment = Alignment.TopCenter
         ) {
             if (isComicMode || detectedImages.isNotEmpty()) {
@@ -559,8 +656,18 @@ fun ReaderView(
                         IconButton(onClick = { showTOC = true }) {
                             Icon(LegadoIcons.Menu, contentDescription = "目录与书签")
                         }
+                        IconButton(onClick = {
+                            isImmersive = !isImmersive
+                            if (isImmersive) showHud = false
+                        }) {
+                            Icon(
+                                if (isImmersive) LegadoIcons.FullscreenExit else LegadoIcons.Fullscreen,
+                                contentDescription = if (isImmersive) "退出全屏沉浸 (F11)" else "进入全屏沉浸 (F11)",
+                                tint = if (isImmersive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                         IconButton(onClick = { showSettingsDialog = true }) {
-                            Icon(LegadoIcons.Tune, contentDescription = "排版设置")
+                            Icon(LegadoIcons.Tune, contentDescription = "排版与设置")
                         }
                     }
                 }
@@ -816,106 +923,262 @@ fun ReaderView(
             }
         }
 
-        // Reading Appearance Settings Dialog
+        // Reading Settings Dialog (Typography, Themes & Touch Zones)
         if (showSettingsDialog) {
             AlertDialog(
                 onDismissRequest = { showSettingsDialog = false },
-                title = { Text("阅读排版与主题") },
+                title = { Text("阅读设置", fontWeight = FontWeight.Bold) },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text("字号大小: $fontSize sp", style = MaterialTheme.typography.bodyMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            FilledTonalButton(onClick = { if (fontSize > 12) fontSize -= 2 }) {
-                                Text("A -")
-                            }
-                            FilledTonalButton(onClick = { if (fontSize < 36) fontSize += 2 }) {
-                                Text("A +")
-                            }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(min = 480.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        PrimaryTabRow(selectedTabIndex = settingsTabIndex) {
+                            Tab(
+                                selected = settingsTabIndex == 0,
+                                onClick = { settingsTabIndex = 0 },
+                                text = { Text("排版与主题") }
+                            )
+                            Tab(
+                                selected = settingsTabIndex == 1,
+                                onClick = { settingsTabIndex = 1 },
+                                text = { Text("翻页与触控区域") }
+                            )
                         }
 
-                        HorizontalDivider()
-
-                        Text("正文字体排版: $fontName", style = MaterialTheme.typography.bodyMedium)
-
-                        var fontDropdownExpanded by remember { mutableStateOf(false) }
-                        val systemFonts = remember { FontManager.getAvailableSystemFonts() }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(modifier = Modifier.weight(1f)) {
-                                OutlinedButton(
-                                    onClick = { fontDropdownExpanded = true },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(fontName, maxLines = 1)
+                        if (settingsTabIndex == 0) {
+                            // Tab 0: Typography & Theme
+                            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                Text("字号大小: $fontSize sp", style = MaterialTheme.typography.bodyMedium)
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    FilledTonalButton(onClick = { if (fontSize > 12) fontSize -= 2 }) {
+                                        Text("A -")
+                                    }
+                                    FilledTonalButton(onClick = { if (fontSize < 36) fontSize += 2 }) {
+                                        Text("A +")
+                                    }
                                 }
-                                DropdownMenu(
-                                    expanded = fontDropdownExpanded,
-                                    onDismissRequest = { fontDropdownExpanded = false }
+
+                                HorizontalDivider()
+
+                                Text("正文字体排版: $fontName", style = MaterialTheme.typography.bodyMedium)
+
+                                var fontDropdownExpanded by remember { mutableStateOf(false) }
+                                val systemFonts = remember { FontManager.getAvailableSystemFonts() }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    systemFonts.forEach { opt ->
-                                        DropdownMenuItem(
-                                            text = { Text(opt.name) },
-                                            onClick = {
-                                                fontPath = opt.path
-                                                fontName = opt.name
-                                                fontDropdownExpanded = false
-                                                scope.launch {
-                                                    AppDatabase.setConfig("reader_font_path", opt.path ?: "")
-                                                    AppDatabase.setConfig("reader_font_name", opt.name)
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        OutlinedButton(
+                                            onClick = { fontDropdownExpanded = true },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(fontName, maxLines = 1)
+                                        }
+                                        DropdownMenu(
+                                            expanded = fontDropdownExpanded,
+                                            onDismissRequest = { fontDropdownExpanded = false }
+                                        ) {
+                                            systemFonts.forEach { opt ->
+                                                DropdownMenuItem(
+                                                    text = { Text(opt.name) },
+                                                    onClick = {
+                                                        fontPath = opt.path
+                                                        fontName = opt.name
+                                                        fontDropdownExpanded = false
+                                                        scope.launch {
+                                                            AppDatabase.setConfig("reader_font_path", opt.path ?: "")
+                                                            AppDatabase.setConfig("reader_font_name", opt.name)
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            val chooser = JFileChooser().apply {
+                                                dialogTitle = "选择外部字体文件 (.ttf / .otf)"
+                                                fileFilter = FileNameExtensionFilter("字体文件 (*.ttf, *.otf)", "ttf", "otf")
+                                                isAcceptAllFileFilterUsed = false
+                                            }
+                                            val res = chooser.showOpenDialog(null)
+                                            if (res == JFileChooser.APPROVE_OPTION) {
+                                                val selectedFile = chooser.selectedFile
+                                                if (selectedFile != null && selectedFile.exists()) {
+                                                    fontPath = selectedFile.absolutePath
+                                                    fontName = selectedFile.nameWithoutExtension
+                                                    scope.launch {
+                                                        AppDatabase.setConfig("reader_font_path", selectedFile.absolutePath)
+                                                        AppDatabase.setConfig("reader_font_name", selectedFile.nameWithoutExtension)
+                                                    }
                                                 }
                                             }
+                                        }
+                                    ) {
+                                        Text("自定义字体...")
+                                    }
+                                }
+
+                                HorizontalDivider()
+
+                                Text("阅读底色", style = MaterialTheme.typography.bodyMedium)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    ReadTheme.values().forEach { t ->
+                                        val selected = currentTheme == t
+                                        Button(
+                                            onClick = { currentTheme = t },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = t.bg,
+                                                contentColor = t.text
+                                            ),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(
+                                                t.nameZh,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Tab 1: Touch & Click Zones Configuration
+                            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                Text(
+                                    text = "屏幕分区比例（模拟安卓端触控翻页手感）：",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val ratioLabels = listOf(
+                                        "25% : 50% : 25% (经典)",
+                                        "33% : 34% : 33% (均等)",
+                                        "20% : 60% : 20% (宽中间)"
+                                    )
+                                    ratioLabels.forEachIndexed { idx, label ->
+                                        FilterChip(
+                                            selected = clickRatioIndex == idx,
+                                            onClick = {
+                                                clickRatioIndex = idx
+                                                scope.launch {
+                                                    AppDatabase.setConfig("reader_click_ratio", idx.toString())
+                                                }
+                                            },
+                                            label = { Text(label) }
                                         )
                                     }
                                 }
-                            }
 
-                            OutlinedButton(
-                                onClick = {
-                                    val chooser = JFileChooser().apply {
-                                        dialogTitle = "选择外部字体文件 (.ttf / .otf)"
-                                        fileFilter = FileNameExtensionFilter("字体文件 (*.ttf, *.otf)", "ttf", "otf")
-                                        isAcceptAllFileFilterUsed = false
-                                    }
-                                    val res = chooser.showOpenDialog(null)
-                                    if (res == JFileChooser.APPROVE_OPTION) {
-                                        val selectedFile = chooser.selectedFile
-                                        if (selectedFile != null && selectedFile.exists()) {
-                                            fontPath = selectedFile.absolutePath
-                                            fontName = selectedFile.nameWithoutExtension
-                                            scope.launch {
-                                                AppDatabase.setConfig("reader_font_path", selectedFile.absolutePath)
-                                                AppDatabase.setConfig("reader_font_name", selectedFile.nameWithoutExtension)
+                                // Interactive visual layout preview card
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(68.dp)
+                                            .padding(6.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        val lW = leftRatio
+                                        val rW = rightRatio
+                                        val cW = 1f - lW - rW
+
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(lW).fillMaxHeight()
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(4.dp)) {
+                                                Text(
+                                                    text = "左区\n${leftClickAction.title.take(5)}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                )
+                                            }
+                                        }
+
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.secondaryContainer,
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(cW).fillMaxHeight()
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(4.dp)) {
+                                                Text(
+                                                    text = "中区\n${centerClickAction.title.take(5)}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                                )
+                                            }
+                                        }
+
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(rW).fillMaxHeight()
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(4.dp)) {
+                                                Text(
+                                                    text = "右区\n${rightClickAction.title.take(5)}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                                )
                                             }
                                         }
                                     }
                                 }
-                            ) {
-                                Text("自定义字体...")
-                            }
-                        }
 
-                        HorizontalDivider()
+                                val availableActions = ClickZoneAction.entries
 
-                        Text("阅读底色", style = MaterialTheme.typography.bodyMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ReadTheme.values().forEach { t ->
-                                val selected = currentTheme == t
-                                Button(
-                                    onClick = { currentTheme = t },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = t.bg,
-                                        contentColor = t.text
-                                    ),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(
-                                        t.nameZh,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    ActionPickerRow(
+                                        label = "左侧区域点击：",
+                                        currentAction = leftClickAction,
+                                        options = availableActions,
+                                        onSelected = { act ->
+                                            leftClickAction = act
+                                            scope.launch {
+                                                AppDatabase.setConfig("reader_click_left_action", act.id)
+                                            }
+                                        }
+                                    )
+
+                                    ActionPickerRow(
+                                        label = "中间区域点击：",
+                                        currentAction = centerClickAction,
+                                        options = availableActions,
+                                        onSelected = { act ->
+                                            centerClickAction = act
+                                            scope.launch {
+                                                AppDatabase.setConfig("reader_click_center_action", act.id)
+                                            }
+                                        }
+                                    )
+
+                                    ActionPickerRow(
+                                        label = "右侧区域点击：",
+                                        currentAction = rightClickAction,
+                                        options = availableActions,
+                                        onSelected = { act ->
+                                            rightClickAction = act
+                                            scope.launch {
+                                                AppDatabase.setConfig("reader_click_right_action", act.id)
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -928,6 +1191,50 @@ fun ReaderView(
                     }
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun ActionPickerRow(
+    label: String,
+    currentAction: ClickZoneAction,
+    options: List<ClickZoneAction>,
+    onSelected: (ClickZoneAction) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text(currentAction.title, style = MaterialTheme.typography.bodySmall)
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                options.forEach { opt ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(opt.title, fontWeight = if (opt == currentAction) FontWeight.Bold else FontWeight.Normal)
+                                Text(opt.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                            }
+                        },
+                        onClick = {
+                            onSelected(opt)
+                            expanded = false
+                        }
+                    )
+                }
+            }
         }
     }
 }
