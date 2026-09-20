@@ -20,6 +20,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 
+import io.legado.desktop.engine.search.SearchRelevanceEngine
+import kotlinx.coroutines.withTimeoutOrNull
+
 @Composable
 fun SearchView(
     onOpenBook: (Book) -> Unit,
@@ -45,21 +48,25 @@ fun SearchView(
                 return@launch
             }
 
-            searchStatus = "正在同时请求 ${sources.size} 个书源..."
+            searchStatus = "正在并发检索 ${sources.size} 个书源..."
             val deferred = sources.map { source ->
                 async(Dispatchers.IO) {
                     try {
-                        BookSourceEngine.search(source, searchKeyword)
+                        withTimeoutOrNull(6000L) {
+                            BookSourceEngine.search(source, searchKeyword)
+                        } ?: emptyList()
                     } catch (e: Exception) {
                         emptyList()
                     }
                 }
             }
 
-            val results = deferred.awaitAll().flatten()
-            searchResults.addAll(results)
+            val rawResults = deferred.awaitAll().flatten()
+            val sorted = SearchRelevanceEngine.sortSearchResults(rawResults, searchKeyword)
+            searchResults.clear()
+            searchResults.addAll(sorted)
             isSearching = false
-            searchStatus = if (results.isEmpty()) "未找到相关书籍" else "共检索到 ${results.size} 本书籍"
+            searchStatus = if (sorted.isEmpty()) "未找到相关书籍" else "共检索到 ${sorted.size} 本书籍（已按相关度智能排序）"
         }
     }
 

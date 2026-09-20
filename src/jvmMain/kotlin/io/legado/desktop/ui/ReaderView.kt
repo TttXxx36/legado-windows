@@ -99,14 +99,39 @@ fun ReaderView(
         if (loadedChapters.isNotEmpty()) {
             chapters = loadedChapters
         } else {
+            chapterContent = "正在拉取目录列表中..."
             val allSources = AppDatabase.getAllBookSources()
             val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
             if (source != null) {
-                val fetched = BookSourceEngine.getChapters(source, book)
-                if (fetched.isNotEmpty()) {
-                    chapters = fetched
-                    AppDatabase.saveChapters(book.bookUrl, fetched)
+                try {
+                    val fetched = BookSourceEngine.getChapters(source, book)
+                    if (fetched.isNotEmpty()) {
+                        chapters = fetched
+                        AppDatabase.saveChapters(book.bookUrl, fetched)
+                    } else {
+                        isLoading = false
+                        chapterContent = """
+                            【目录加载失败】未能从书源《${source.bookSourceName}》获取到章节列表。
+                            
+                            可能的原因：
+                            1. 该书源网站当前连接超时或已被阻断；
+                            2. 目标书籍在该站点已下架或需要滑动验证反爬；
+                            3. 目录解析规则与该网站新版结构不匹配。
+                            
+                            建议：请点击左上方返回按钮，在搜索列表中选择其他书源阅读。
+                        """.trimIndent()
+                    }
+                } catch (e: Exception) {
+                    isLoading = false
+                    chapterContent = "【目录加载异常】获取章节列表失败：${e.localizedMessage ?: e.message}\n\n建议返回搜索列表更换书源。"
                 }
+            } else {
+                isLoading = false
+                chapterContent = """
+                    【未找到对应书源】（书源地址：${book.origin}）
+                    
+                    该书籍绑定的书源不存在或已被删除。请在“书源”模块重新导入或在搜索中重新换源。
+                """.trimIndent()
             }
         }
 
@@ -120,30 +145,48 @@ fun ReaderView(
         if (chapters.isNotEmpty() && currentChapterIndex in chapters.indices) {
             val chapter = chapters[currentChapterIndex]
             isLoading = true
+            chapterContent = "正在加载章节《${chapter.title}》正文内容..."
             val allSources = AppDatabase.getAllBookSources()
             val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
 
-            val raw = if (book.type == 3 || book.origin == "local") {
-                LocalBookImporter.loadChapterContent(chapter)
-            } else if (source != null) {
-                BookSourceEngine.getContent(source, book, chapter)
-            } else {
-                """
-                    ${chapter.title}
-                    
-                    这是本地模拟章节示例正文内容。
-                    天色微明，晨曦破晓，群山在薄雾中若隐若现。
-                    他站在青石崖边，凝望着远方翻腾的云海，微风拂过衣袂。
-                    修真之道，路漫漫其修远兮，既已踏足，便再无退路。
-                    
-                    （注：请在“书源”中导入真实 Legado 3.0 书源并在“搜索”中添加网络书籍，即可自动同步拉取在线正文！）
-                """.trimIndent()
+            try {
+                val raw = if (book.type == 3 || book.origin == "local") {
+                    LocalBookImporter.loadChapterContent(chapter)
+                } else if (source != null) {
+                    BookSourceEngine.getContent(source, book, chapter)
+                } else {
+                    """
+                        ${chapter.title}
+                        
+                        这是本地模拟章节示例正文内容。
+                        天色微明，晨曦破晓，群山在薄雾中若隐若现。
+                        他站在青石崖边，凝望着远方翻腾的云海，微风拂过衣袂。
+                        修真之道，路漫漫其修远兮，既已踏足，便再无退路。
+                        
+                        （注：请在“书源”中导入真实 Legado 3.0 书源并在“搜索”中添加网络书籍，即可自动同步拉取在线正文！）
+                    """.trimIndent()
+                }
+
+                val cleaned = ReplaceRuleEngine.applyRules(raw, book, source)
+                if (cleaned.isBlank()) {
+                    chapterContent = """
+                        【正文内容为空】
+                        
+                        未能从源站《${source?.bookSourceName ?: "未知"}》提取到《${chapter.title}》的有效文字。
+                        章节地址: ${chapter.url}
+                        
+                        可能原因：目标章节需要登录/付费、存在复杂反爬防护，或书源正文解析规则不匹配。
+                        建议：点击顶部左上角返回，在“搜索”列表中换一个书源阅读。
+                    """.trimIndent()
+                } else {
+                    chapterContent = cleaned
+                }
+            } catch (e: Exception) {
+                chapterContent = "【正文加载异常】：${e.localizedMessage ?: e.message}\n\n建议返回搜索界面更换其他书源。"
+            } finally {
+                isLoading = false
             }
 
-            // Apply Replace & Clean Rules
-            chapterContent = ReplaceRuleEngine.applyRules(raw, book, source)
-
-            isLoading = false
             scrollState.scrollTo(0)
 
             // If TTS was speaking, restart with new chapter
@@ -395,6 +438,14 @@ fun ReaderView(
                     Spacer(Modifier.height(80.dp))
                 }
             }
+        }
+
+        if (isLoading) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+            )
         }
 
         // Top Floating HUD
