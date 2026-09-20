@@ -1,6 +1,6 @@
 package io.legado.desktop.ui
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -25,6 +25,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import io.legado.desktop.data.model.ClickZoneAction
@@ -32,7 +33,11 @@ import io.legado.desktop.data.db.AppDatabase
 import io.legado.desktop.data.model.Book
 import io.legado.desktop.data.model.BookChapter
 import io.legado.desktop.data.model.Bookmark
+import io.legado.desktop.engine.BookCacheEngine
 import io.legado.desktop.engine.BookSourceEngine
+import io.legado.desktop.engine.PageTurnMode
+import io.legado.desktop.engine.TextPagingEngine
+import kotlin.math.roundToInt
 import io.legado.desktop.engine.hotkey.GlobalMediaHotkeyManager
 import io.legado.desktop.engine.local.LocalBookImporter
 import io.legado.desktop.engine.rule.ReplaceRuleEngine
@@ -82,6 +87,51 @@ fun ReaderView(
     var settingsTabIndex by remember { mutableStateOf(0) } // 0: 排版与主题, 1: 翻页与屏幕触控
     var showHud by remember { mutableStateOf(true) }
 
+    // Advanced 5-Dimension Typography & Page Turn Mode
+    var pageTurnMode by remember { mutableStateOf(PageTurnMode.SCROLL) }
+    var lineSpacingMultiplier by remember { mutableStateOf(1.75f) }
+    var paragraphSpacingDp by remember { mutableStateOf(16) }
+    var firstLineIndent by remember { mutableStateOf(true) }
+    var horizontalPaddingDp by remember { mutableStateOf(32) }
+    var showBatchCacheDialog by remember { mutableStateOf(false) }
+
+    // Pagination Calculation States
+    var viewportWidthPx by remember { mutableStateOf(800f) }
+    var viewportHeightPx by remember { mutableStateOf(900f) }
+    var currentPageIndex by remember { mutableStateOf(0) }
+    var targetPageWhenChapterLoaded by remember { mutableStateOf<Int?>(null) }
+
+    val downloadProgress by BookCacheEngine.downloadProgress.collectAsState()
+
+    val pagedChapter = remember(
+        chapterContent,
+        viewportWidthPx,
+        viewportHeightPx,
+        fontSize,
+        lineSpacingMultiplier,
+        paragraphSpacingDp,
+        firstLineIndent,
+        horizontalPaddingDp
+    ) {
+        val effectiveTextW = (viewportWidthPx - horizontalPaddingDp * 2 * 1.5f).coerceAtLeast(240f)
+        val effectiveTextH = (viewportHeightPx - 130f).coerceAtLeast(300f)
+        TextPagingEngine.paginate(
+            content = chapterContent,
+            viewportWidthPx = effectiveTextW,
+            viewportHeightPx = effectiveTextH,
+            fontSizePx = fontSize.toFloat() * 1.35f,
+            lineSpacingMultiplier = lineSpacingMultiplier,
+            paragraphSpacingPx = paragraphSpacingDp.toFloat() * 1.5f,
+            firstLineIndent = firstLineIndent
+        )
+    }
+
+    // Safely clamp current page index
+    val safePageIndex = remember(currentPageIndex, pagedChapter.totalPages) {
+        if (pagedChapter.totalPages <= 0) 0
+        else currentPageIndex.coerceIn(0, pagedChapter.totalPages - 1)
+    }
+
     // Immersive / Fullscreen State
     var isImmersive by remember { mutableStateOf(false) }
 
@@ -102,24 +152,43 @@ fun ReaderView(
     fun executeAction(action: ClickZoneAction) {
         when (action) {
             ClickZoneAction.PAGE_PREV -> {
-                scope.launch {
-                    val viewportH = scrollState.viewportSize
-                    val step = if (viewportH > 0) (viewportH * 0.85f).toInt() else 600
-                    if (scrollState.value > 0) {
-                        scrollState.animateScrollTo((scrollState.value - step).coerceAtLeast(0))
+                if (pageTurnMode == PageTurnMode.SLIDE_PAGING && !isDualPage) {
+                    if (safePageIndex > 0) {
+                        currentPageIndex = safePageIndex - 1
                     } else if (currentChapterIndex > 0) {
+                        targetPageWhenChapterLoaded = 999999
                         currentChapterIndex--
+                    }
+                } else {
+                    scope.launch {
+                        val viewportH = scrollState.viewportSize
+                        val step = if (viewportH > 0) (viewportH * 0.85f).toInt() else 600
+                        if (scrollState.value > 0) {
+                            scrollState.animateScrollTo((scrollState.value - step).coerceAtLeast(0))
+                        } else if (currentChapterIndex > 0) {
+                            currentChapterIndex--
+                        }
                     }
                 }
             }
             ClickZoneAction.PAGE_NEXT -> {
-                scope.launch {
-                    val viewportH = scrollState.viewportSize
-                    val step = if (viewportH > 0) (viewportH * 0.85f).toInt() else 600
-                    if (scrollState.value < scrollState.maxValue) {
-                        scrollState.animateScrollTo((scrollState.value + step).coerceAtMost(scrollState.maxValue))
+                if (pageTurnMode == PageTurnMode.SLIDE_PAGING && !isDualPage) {
+                    if (safePageIndex < pagedChapter.totalPages - 1) {
+                        currentPageIndex = safePageIndex + 1
                     } else if (currentChapterIndex < chapters.size - 1) {
+                        targetPageWhenChapterLoaded = 0
+                        currentPageIndex = 0
                         currentChapterIndex++
+                    }
+                } else {
+                    scope.launch {
+                        val viewportH = scrollState.viewportSize
+                        val step = if (viewportH > 0) (viewportH * 0.85f).toInt() else 600
+                        if (scrollState.value < scrollState.maxValue) {
+                            scrollState.animateScrollTo((scrollState.value + step).coerceAtMost(scrollState.maxValue))
+                        } else if (currentChapterIndex < chapters.size - 1) {
+                            currentChapterIndex++
+                        }
                     }
                 }
             }
@@ -127,10 +196,18 @@ fun ReaderView(
                 showHud = !showHud
             }
             ClickZoneAction.PREV_CHAPTER -> {
-                if (currentChapterIndex > 0) currentChapterIndex--
+                if (currentChapterIndex > 0) {
+                    targetPageWhenChapterLoaded = 0
+                    currentPageIndex = 0
+                    currentChapterIndex--
+                }
             }
             ClickZoneAction.NEXT_CHAPTER -> {
-                if (currentChapterIndex < chapters.size - 1) currentChapterIndex++
+                if (currentChapterIndex < chapters.size - 1) {
+                    targetPageWhenChapterLoaded = 0
+                    currentPageIndex = 0
+                    currentChapterIndex++
+                }
             }
             ClickZoneAction.OPEN_TOC -> {
                 showTOC = true
@@ -173,6 +250,22 @@ fun ReaderView(
         centerClickAction = ClickZoneAction.fromId(savedCenter, ClickZoneAction.TOGGLE_MENU)
         rightClickAction = ClickZoneAction.fromId(savedRight, ClickZoneAction.PAGE_NEXT)
         clickRatioIndex = savedRatio
+
+        // Load 5-Dimension Typography & Page Turn Mode
+        val savedMode = AppDatabase.getConfig("reader_page_turn_mode", PageTurnMode.SCROLL.id)
+        pageTurnMode = PageTurnMode.fromId(savedMode)
+
+        val savedLineSpacing = AppDatabase.getConfig("reader_line_spacing", "1.75").toFloatOrNull() ?: 1.75f
+        lineSpacingMultiplier = savedLineSpacing
+
+        val savedParaSpacing = AppDatabase.getConfig("reader_paragraph_spacing", "16").toIntOrNull() ?: 16
+        paragraphSpacingDp = savedParaSpacing
+
+        val savedIndent = AppDatabase.getConfig("reader_first_line_indent", "true").toBooleanStrictOrNull() ?: true
+        firstLineIndent = savedIndent
+
+        val savedPadding = AppDatabase.getConfig("reader_horizontal_padding", "32").toIntOrNull() ?: 32
+        horizontalPaddingDp = savedPadding
 
         val loadedChapters = AppDatabase.getChapters(book.bookUrl)
         if (loadedChapters.isNotEmpty()) {
@@ -225,48 +318,66 @@ fun ReaderView(
             val chapter = chapters[currentChapterIndex]
             isLoading = true
             chapterContent = "正在加载章节《${chapter.title}》正文内容..."
-            val allSources = AppDatabase.getAllBookSources()
-            val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
 
-            try {
-                val raw = if (book.type == 3 || book.origin == "local") {
-                    LocalBookImporter.loadChapterContent(chapter)
-                } else if (source != null) {
-                    BookSourceEngine.getContent(source, book, chapter)
-                } else {
-                    """
-                        ${chapter.title}
-                        
-                        这是本地模拟章节示例正文内容。
-                        天色微明，晨曦破晓，群山在薄雾中若隐若现。
-                        他站在青石崖边，凝望着远方翻腾的云海，微风拂过衣袂。
-                        修真之道，路漫漫其修远兮，既已踏足，便再无退路。
-                        
-                        （注：请在“书源”中导入真实 Legado 3.0 书源并在“搜索”中添加网络书籍，即可自动同步拉取在线正文！）
-                    """.trimIndent()
-                }
-
-                val cleaned = ReplaceRuleEngine.applyRules(raw, book, source)
-                if (cleaned.isBlank()) {
-                    chapterContent = """
-                        【正文内容为空】
-                        
-                        未能从源站《${source?.bookSourceName ?: "未知"}》提取到《${chapter.title}》的有效文字。
-                        章节地址: ${chapter.url}
-                        
-                        可能原因：目标章节需要登录/付费、存在复杂反爬防护，或书源正文解析规则不匹配。
-                        建议：点击顶部左上角返回，在“搜索”列表中换一个书源阅读。
-                    """.trimIndent()
-                } else {
-                    chapterContent = cleaned
-                }
-            } catch (e: Exception) {
-                chapterContent = "【正文加载异常】：${e.localizedMessage ?: e.message}\n\n建议返回搜索界面更换其他书源。"
-            } finally {
+            // 1. Fast path: check offline cache first
+            val cached = BookCacheEngine.readCache(book, currentChapterIndex)
+            if (!cached.isNullOrBlank()) {
+                chapterContent = cached
                 isLoading = false
+            } else {
+                val allSources = AppDatabase.getAllBookSources()
+                val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
+
+                try {
+                    val raw = if (book.type == 3 || book.origin == "local") {
+                        LocalBookImporter.loadChapterContent(chapter)
+                    } else if (source != null) {
+                        BookSourceEngine.getContent(source, book, chapter)
+                    } else {
+                        """
+                            ${chapter.title}
+                            
+                            这是本地模拟章节示例正文内容。
+                            天色微明，晨曦破晓，群山在薄雾中若隐若现。
+                            他站在青石崖边，凝望着远方翻腾的云海，微风拂过衣袂。
+                            修真之道，路漫漫其修远兮，既已踏足，便再无退路。
+                            
+                            （注：请在“书源”中导入真实 Legado 3.0 书源并在“搜索”中添加网络书籍，即可自动同步拉取在线正文！）
+                        """.trimIndent()
+                    }
+
+                    val cleaned = ReplaceRuleEngine.applyRules(raw, book, source)
+                    if (cleaned.isBlank()) {
+                        chapterContent = """
+                            【正文内容为空】
+                            
+                            未能从源站《${source?.bookSourceName ?: "未知"}》提取到《${chapter.title}》的有效文字。
+                            章节地址: ${chapter.url}
+                            
+                            可能原因：目标章节需要登录/付费、存在复杂反爬防护，或书源正文解析规则不匹配。
+                            建议：点击顶部左上角返回，在“搜索”列表中换一个书源阅读。
+                        """.trimIndent()
+                    } else {
+                        chapterContent = cleaned
+                        // Save valid content to local cache
+                        if (!cleaned.startsWith("【正文内容为空】") && !cleaned.startsWith("【正文加载异常】")) {
+                            BookCacheEngine.writeCache(book, currentChapterIndex, cleaned)
+                        }
+                    }
+                } catch (e: Exception) {
+                    chapterContent = "【正文加载异常】：${e.localizedMessage ?: e.message}\n\n建议返回搜索界面更换其他书源。"
+                } finally {
+                    isLoading = false
+                }
             }
 
             scrollState.scrollTo(0)
+            if (targetPageWhenChapterLoaded != null) {
+                currentPageIndex = targetPageWhenChapterLoaded!!
+                targetPageWhenChapterLoaded = null
+            } else {
+                currentPageIndex = 0
+            }
 
             // If TTS was speaking, restart with new chapter
             if (isTtsActive && isTtsPlaying) {
@@ -391,7 +502,7 @@ fun ReaderView(
             }
     ) {
         // Reader Content Canvas
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(leftClickAction, centerClickAction, rightClickAction, leftRatio, rightRatio) {
@@ -409,6 +520,12 @@ fun ReaderView(
                 },
             contentAlignment = Alignment.TopCenter
         ) {
+            val density = LocalDensity.current
+            LaunchedEffect(maxWidth, maxHeight) {
+                viewportWidthPx = with(density) { maxWidth.toPx() }
+                viewportHeightPx = with(density) { maxHeight.toPx() }
+            }
+
             if (isComicMode || detectedImages.isNotEmpty()) {
                 // Comic / Manga Continuous Roll Mode
                 val imagesToShow = if (detectedImages.isNotEmpty()) {
@@ -486,7 +603,7 @@ fun ReaderView(
                         Text(
                             text = chapterContent,
                             fontSize = fontSize.sp,
-                            lineHeight = (fontSize * 1.7).sp,
+                            lineHeight = (fontSize * lineSpacingMultiplier).sp,
                             color = currentTheme.text,
                             letterSpacing = 0.5.sp,
                             fontFamily = activeFontFamily
@@ -501,19 +618,109 @@ fun ReaderView(
                         Text(
                             text = "【双页模式 - 右栏页签】\n\n当前正文共 ${chapterContent.length} 字。\n已启用 Legado 净化过滤规则。\n翻页可使用 Space / 方向键 / PageDown。\n点击页面任意空白处可显示/隐藏顶部与底部阅读面板。",
                             fontSize = fontSize.sp,
-                            lineHeight = (fontSize * 1.7).sp,
+                            lineHeight = (fontSize * lineSpacingMultiplier).sp,
                             color = currentTheme.text.copy(alpha = 0.7f),
                             fontFamily = activeFontFamily
                         )
                     }
                 }
-            } else {
-                // Centered single column
+            } else if (pageTurnMode == PageTurnMode.SLIDE_PAGING) {
+                // Android-Style Slide Paging Mode
                 Column(
                     modifier = Modifier
                         .widthIn(max = 840.dp)
                         .fillMaxHeight()
-                        .padding(horizontal = 32.dp, vertical = 64.dp)
+                        .padding(horizontal = horizontalPaddingDp.dp, vertical = 24.dp),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Header Status
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = currentChapterTitle,
+                            fontSize = 13.sp,
+                            color = currentTheme.text.copy(alpha = 0.55f),
+                            maxLines = 1,
+                            fontFamily = activeFontFamily,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "${safePageIndex + 1} / ${pagedChapter.totalPages} 页",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = currentTheme.text.copy(alpha = 0.6f),
+                            fontFamily = activeFontFamily
+                        )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    // Center Content with horizontal slide animation
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.TopStart
+                    ) {
+                        AnimatedContent(
+                            targetState = safePageIndex,
+                            transitionSpec = {
+                                if (targetState > initialState) {
+                                    (slideInHorizontally { width -> width / 3 } + fadeIn()).togetherWith(
+                                        slideOutHorizontally { width -> -width / 3 } + fadeOut()
+                                    )
+                                } else {
+                                    (slideInHorizontally { width -> -width / 3 } + fadeIn()).togetherWith(
+                                        slideOutHorizontally { width -> width / 3 } + fadeOut()
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        ) { pageIdx ->
+                            val pageText = if (pageIdx in pagedChapter.pages.indices) pagedChapter.pages[pageIdx] else ""
+                            Text(
+                                text = pageText,
+                                fontSize = fontSize.sp,
+                                lineHeight = (fontSize * lineSpacingMultiplier).sp,
+                                color = currentTheme.text,
+                                letterSpacing = 0.6.sp,
+                                fontFamily = activeFontFamily,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+
+                    // Footer Status
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "本章共 ${pagedChapter.totalCharCount} 字",
+                            fontSize = 12.sp,
+                            color = currentTheme.text.copy(alpha = 0.45f),
+                            fontFamily = activeFontFamily
+                        )
+                        Text(
+                            text = "Legado 仿真分页模式",
+                            fontSize = 12.sp,
+                            color = currentTheme.text.copy(alpha = 0.35f)
+                        )
+                    }
+                }
+            } else {
+                // Centered single column continuous vertical scroll
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 840.dp)
+                        .fillMaxHeight()
+                        .padding(horizontal = horizontalPaddingDp.dp, vertical = 64.dp)
                         .verticalScroll(scrollState)
                 ) {
                     Text(
@@ -527,7 +734,7 @@ fun ReaderView(
                     Text(
                         text = chapterContent,
                         fontSize = fontSize.sp,
-                        lineHeight = (fontSize * 1.75).sp,
+                        lineHeight = (fontSize * lineSpacingMultiplier).sp,
                         color = currentTheme.text,
                         letterSpacing = 0.6.sp,
                         fontFamily = activeFontFamily
@@ -664,6 +871,13 @@ fun ReaderView(
                                 if (isImmersive) LegadoIcons.FullscreenExit else LegadoIcons.Fullscreen,
                                 contentDescription = if (isImmersive) "退出全屏沉浸 (F11)" else "进入全屏沉浸 (F11)",
                                 tint = if (isImmersive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        IconButton(onClick = { showBatchCacheDialog = true }) {
+                            Icon(
+                                LegadoIcons.CloudDownload,
+                                contentDescription = "批量离线缓存",
+                                tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
                         IconButton(onClick = { showSettingsDialog = true }) {
@@ -949,8 +1163,29 @@ fun ReaderView(
                         }
 
                         if (settingsTabIndex == 0) {
-                            // Tab 0: Typography & Theme
-                            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            // Tab 0: Typography, Page Turn Mode & Theme
+                            Column(
+                                modifier = Modifier.verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                Text("翻页交互模式", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    PageTurnMode.entries.forEach { mode ->
+                                        FilterChip(
+                                            selected = pageTurnMode == mode,
+                                            onClick = {
+                                                pageTurnMode = mode
+                                                scope.launch {
+                                                    AppDatabase.setConfig("reader_page_turn_mode", mode.id)
+                                                }
+                                            },
+                                            label = { Text(mode.title) }
+                                        )
+                                    }
+                                }
+
+                                HorizontalDivider()
+
                                 Text("字号大小: $fontSize sp", style = MaterialTheme.typography.bodyMedium)
                                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     FilledTonalButton(onClick = { if (fontSize > 12) fontSize -= 2 }) {
@@ -958,6 +1193,83 @@ fun ReaderView(
                                     }
                                     FilledTonalButton(onClick = { if (fontSize < 36) fontSize += 2 }) {
                                         Text("A +")
+                                    }
+                                }
+
+                                HorizontalDivider()
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("行间距倍数", style = MaterialTheme.typography.bodySmall)
+                                    Text("${"%.2f".format(lineSpacingMultiplier)} 倍", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                }
+                                Slider(
+                                    value = lineSpacingMultiplier,
+                                    onValueChange = { lineSpacingMultiplier = it },
+                                    onValueChangeFinished = {
+                                        scope.launch {
+                                            AppDatabase.setConfig("reader_line_spacing", lineSpacingMultiplier.toString())
+                                        }
+                                    },
+                                    valueRange = 1.2f..2.5f,
+                                    steps = 12
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("段落间距", style = MaterialTheme.typography.bodySmall)
+                                    Text("${paragraphSpacingDp} dp", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                }
+                                Slider(
+                                    value = paragraphSpacingDp.toFloat(),
+                                    onValueChange = { paragraphSpacingDp = it.roundToInt() },
+                                    onValueChangeFinished = {
+                                        scope.launch {
+                                            AppDatabase.setConfig("reader_paragraph_spacing", paragraphSpacingDp.toString())
+                                        }
+                                    },
+                                    valueRange = 0f..32f,
+                                    steps = 7
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text("首行全角缩进", style = MaterialTheme.typography.bodyMedium)
+                                        Text("段首自动留出 2 个中文字符空隙", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                                    }
+                                    Switch(
+                                        checked = firstLineIndent,
+                                        onCheckedChange = {
+                                            firstLineIndent = it
+                                            scope.launch {
+                                                AppDatabase.setConfig("reader_first_line_indent", it.toString())
+                                            }
+                                        }
+                                    )
+                                }
+
+                                Text("页面左右边距", style = MaterialTheme.typography.bodySmall)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val paddings = listOf(Pair(16, "紧凑 (16dp)"), Pair(32, "适中 (32dp)"), Pair(64, "宽裕 (64dp)"))
+                                    paddings.forEach { (pad, label) ->
+                                        FilterChip(
+                                            selected = horizontalPaddingDp == pad,
+                                            onClick = {
+                                                horizontalPaddingDp = pad
+                                                scope.launch {
+                                                    AppDatabase.setConfig("reader_horizontal_padding", pad.toString())
+                                                }
+                                            },
+                                            label = { Text(label) }
+                                        )
                                     }
                                 }
 
@@ -1191,6 +1503,187 @@ fun ReaderView(
                     }
                 }
             )
+        }
+
+        // Offline Batch Cache Dialog
+        if (showBatchCacheDialog) {
+            AlertDialog(
+                onDismissRequest = { showBatchCacheDialog = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(LegadoIcons.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text("离线批量缓存", fontWeight = FontWeight.Bold)
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "《${book.name}》当前位于第 ${currentChapterIndex + 1} 章 / 共 ${chapters.size} 章",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "多协程后台并发拉取，自动保存在本地缓存目录中，断网环境下即开即读。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        HorizontalDivider()
+
+                        val remainingChapters = (chapters.size - currentChapterIndex).coerceAtLeast(0)
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    val allSources = AppDatabase.getAllBookSources()
+                                    val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
+                                    if (source != null && chapters.isNotEmpty()) {
+                                        BookCacheEngine.startBatchDownload(book, source, chapters, currentChapterIndex, 50)
+                                    }
+                                }
+                                showBatchCacheDialog = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("📥 缓存后 50 章 (${minOf(50, remainingChapters)} 章)")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    val allSources = AppDatabase.getAllBookSources()
+                                    val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
+                                    if (source != null && chapters.isNotEmpty()) {
+                                        BookCacheEngine.startBatchDownload(book, source, chapters, currentChapterIndex, 100)
+                                    }
+                                }
+                                showBatchCacheDialog = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("📥 缓存后 100 章 (${minOf(100, remainingChapters)} 章)")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    val allSources = AppDatabase.getAllBookSources()
+                                    val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
+                                    if (source != null && chapters.isNotEmpty()) {
+                                        BookCacheEngine.startBatchDownload(book, source, chapters, currentChapterIndex, remainingChapters)
+                                    }
+                                }
+                                showBatchCacheDialog = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("📥 缓存至最新章节 ($remainingChapters 章)")
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                scope.launch {
+                                    val allSources = AppDatabase.getAllBookSources()
+                                    val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
+                                    if (source != null && chapters.isNotEmpty()) {
+                                        BookCacheEngine.startBatchDownload(book, source, chapters, 0, chapters.size)
+                                    }
+                                }
+                                showBatchCacheDialog = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("⚡ 缓存全本书籍 (全书共 ${chapters.size} 章)")
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showBatchCacheDialog = false }) {
+                        Text("关闭")
+                    }
+                }
+            )
+        }
+
+        // Floating Batch Download Progress Pill
+        AnimatedVisibility(
+            visible = downloadProgress != null && downloadProgress?.bookUrl == book.bookUrl,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 24.dp, bottom = 24.dp)
+        ) {
+            downloadProgress?.let { prog ->
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.width(320.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    LegadoIcons.CloudDownload,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = if (prog.isFinished) "离线缓存完成" else "正在离线缓存...",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            IconButton(
+                                onClick = { prog.cancelAction() },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    LegadoIcons.Close,
+                                    contentDescription = "取消/关闭",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        val fraction = if (prog.totalToDownload > 0) prog.downloadedCount.toFloat() / prog.totalToDownload else 0f
+                        LinearProgressIndicator(
+                            progress = { fraction },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = prog.currentChapterTitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "${prog.downloadedCount}/${prog.totalToDownload} (${(fraction * 100).toInt()}%)",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

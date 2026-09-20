@@ -1,6 +1,6 @@
 package io.legado.desktop.ui
 
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -24,9 +24,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import io.legado.desktop.data.db.AppDatabase
 import io.legado.desktop.data.model.Book
+import io.legado.desktop.data.model.BookChapter
 import io.legado.desktop.data.model.BookSource
 import io.legado.desktop.data.model.ReplaceRule
 import io.legado.desktop.data.model.WebDavConfig
+import io.legado.desktop.engine.BookCacheEngine
+import io.legado.desktop.engine.CacheDownloadProgress
 import io.legado.desktop.engine.BookSourceEngine
 import io.legado.desktop.engine.hotkey.GlobalMediaHotkeyManager
 import io.legado.desktop.engine.local.LocalBookImporter
@@ -66,6 +69,7 @@ fun AppShell(
 
     val books = remember { mutableStateListOf<Book>() }
     val sources = remember { mutableStateListOf<BookSource>() }
+    val globalDownloadProgress by BookCacheEngine.downloadProgress.collectAsState()
 
     // Load initial data from SQLite
     LaunchedEffect(Unit) {
@@ -218,6 +222,96 @@ fun AppShell(
                         NavDestination.SETTINGS -> SettingsView(darkTheme, onToggleTheme)
                     }
                 }
+
+                // Global Floating Batch Download Progress Pill
+                GlobalDownloadPill(
+                    prog = globalDownloadProgress,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 12.dp, bottom = 12.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun GlobalDownloadPill(
+    prog: CacheDownloadProgress?,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = prog != null,
+        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        modifier = modifier
+    ) {
+        if (prog != null) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shadowElevation = 8.dp,
+                modifier = Modifier.width(320.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                LegadoIcons.CloudDownload,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = if (prog.isFinished) "离线缓存完成" else "正在离线缓存...",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        IconButton(
+                            onClick = { prog.cancelAction() },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                LegadoIcons.Close,
+                                contentDescription = "取消/关闭",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    val fraction = if (prog.totalToDownload > 0) prog.downloadedCount.toFloat() / prog.totalToDownload else 0f
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${prog.bookName} · ${prog.currentChapterTitle}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "${prog.downloadedCount}/${prog.totalToDownload} (${(fraction * 100).toInt()}%)",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
             }
         }
     }
@@ -340,6 +434,10 @@ fun BookshelfView(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        var batchCacheBook by remember { mutableStateOf<Book?>(null) }
+        var batchCacheChapters by remember { mutableStateOf<List<BookChapter>>(emptyList()) }
+        var isPreparingChapters by remember { mutableStateOf(false) }
+
         if (books.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -362,10 +460,116 @@ fun BookshelfView(
                     BookCard(
                         book = book,
                         onOpen = { onOpenBook(book) },
+                        onCache = {
+                            batchCacheBook = book
+                            scope.launch {
+                                isPreparingChapters = true
+                                var chs = AppDatabase.getChapters(book.bookUrl)
+                                if (chs.isEmpty()) {
+                                    val allSources = AppDatabase.getAllBookSources()
+                                    val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
+                                    if (source != null) {
+                                        try {
+                                            chs = BookSourceEngine.getChapters(source, book)
+                                            if (chs.isNotEmpty()) {
+                                                AppDatabase.saveChapters(book.bookUrl, chs)
+                                            }
+                                        } catch (_: Exception) {}
+                                    }
+                                }
+                                batchCacheChapters = chs
+                                isPreparingChapters = false
+                            }
+                        },
                         onDelete = { onDeleteBook(book) }
                     )
                 }
             }
+        }
+
+        if (batchCacheBook != null) {
+            AlertDialog(
+                onDismissRequest = { batchCacheBook = null },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(LegadoIcons.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text("离线批量缓存: 《${batchCacheBook!!.name}》", fontWeight = FontWeight.Bold)
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (isPreparingChapters) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Text("正在拉取最新章节目录...", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        } else {
+                            Text("全书共 ${batchCacheChapters.size} 个章节，已就绪可执行离线下载。", style = MaterialTheme.typography.bodyMedium)
+                            HorizontalDivider()
+
+                            val totalCh = batchCacheChapters.size
+                            val currentDur = batchCacheBook!!.durChapterIndex.coerceIn(0, (totalCh - 1).coerceAtLeast(0))
+                            val remain = (totalCh - currentDur).coerceAtLeast(0)
+
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        val allSources = AppDatabase.getAllBookSources()
+                                        val source = allSources.firstOrNull { it.bookSourceUrl == batchCacheBook!!.origin }
+                                        if (source != null && batchCacheChapters.isNotEmpty()) {
+                                            BookCacheEngine.startBatchDownload(batchCacheBook!!, source, batchCacheChapters, currentDur, 50)
+                                        }
+                                    }
+                                    batchCacheBook = null
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("📥 缓存后 50 章 (${minOf(50, remain)} 章)")
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        val allSources = AppDatabase.getAllBookSources()
+                                        val source = allSources.firstOrNull { it.bookSourceUrl == batchCacheBook!!.origin }
+                                        if (source != null && batchCacheChapters.isNotEmpty()) {
+                                            BookCacheEngine.startBatchDownload(batchCacheBook!!, source, batchCacheChapters, currentDur, 100)
+                                        }
+                                    }
+                                    batchCacheBook = null
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("📥 缓存后 100 章 (${minOf(100, remain)} 章)")
+                            }
+
+                            FilledTonalButton(
+                                onClick = {
+                                    scope.launch {
+                                        val allSources = AppDatabase.getAllBookSources()
+                                        val source = allSources.firstOrNull { it.bookSourceUrl == batchCacheBook!!.origin }
+                                        if (source != null && batchCacheChapters.isNotEmpty()) {
+                                            BookCacheEngine.startBatchDownload(batchCacheBook!!, source, batchCacheChapters, 0, totalCh)
+                                        }
+                                    }
+                                    batchCacheBook = null
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("⚡ 缓存全本书籍 (全书 $totalCh 章)")
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { batchCacheBook = null }) {
+                        Text("关闭")
+                    }
+                }
+            )
         }
     }
 }
@@ -374,6 +578,7 @@ fun BookshelfView(
 fun BookCard(
     book: Book,
     onOpen: () -> Unit,
+    onCache: () -> Unit,
     onDelete: () -> Unit
 ) {
     ElevatedCard(
@@ -421,12 +626,37 @@ fun BookCard(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1
             )
-            Text(
-                text = book.author.ifBlank { "未知作者" },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = book.author.ifBlank { "未知作者" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onCache, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            LegadoIcons.CloudDownload,
+                            contentDescription = "批量缓存",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            LegadoIcons.Delete,
+                            contentDescription = "删除书籍",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
             if (!book.latestChapterTitle.isNullOrBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -1077,7 +1307,136 @@ fun SettingsView(
             }
         }
 
-        // 3. Text Clean & Replace Rules Card
+        // 3. Storage & Cache Management Card
+        var currentCachePath by remember { mutableStateOf("") }
+        var cacheSizeBytes by remember { mutableStateOf(0L) }
+        var showClearCacheConfirm by remember { mutableStateOf(false) }
+
+        LaunchedEffect(Unit) {
+            val dir = BookCacheEngine.getCacheDir()
+            currentCachePath = dir.absolutePath
+            cacheSizeBytes = BookCacheEngine.getCacheTotalSizeBytes()
+        }
+
+        OutlinedCard(
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "离线缓存与存储管理",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "已占用: ${BookCacheEngine.formatFileSize(cacheSizeBytes)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Text(
+                    text = "所有离线章节以纯文本分层存储在本地磁盘，不增加 SQLite 数据库文件的写锁压力与膨胀风险。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                OutlinedTextField(
+                    value = currentCachePath,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("当前缓存根目录") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        onClick = {
+                            val chooser = JFileChooser().apply {
+                                dialogTitle = "选择离线缓存存储目录"
+                                fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+                                isAcceptAllFileFilterUsed = false
+                            }
+                            val res = chooser.showOpenDialog(null)
+                            if (res == JFileChooser.APPROVE_OPTION && chooser.selectedFile != null) {
+                                val selectedDir = chooser.selectedFile
+                                scope.launch {
+                                    BookCacheEngine.setCustomCacheDir(selectedDir.absolutePath)
+                                    val dir = BookCacheEngine.getCacheDir()
+                                    currentCachePath = dir.absolutePath
+                                    cacheSizeBytes = BookCacheEngine.getCacheTotalSizeBytes()
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(LegadoIcons.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("更改存储目录...")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                BookCacheEngine.setCustomCacheDir("")
+                                val dir = BookCacheEngine.getCacheDir()
+                                currentCachePath = dir.absolutePath
+                                cacheSizeBytes = BookCacheEngine.getCacheTotalSizeBytes()
+                            }
+                        }
+                    ) {
+                        Text("恢复默认路径")
+                    }
+
+                    OutlinedButton(
+                        onClick = { showClearCacheConfirm = true },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(LegadoIcons.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("清空离线缓存")
+                    }
+                }
+
+                if (showClearCacheConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showClearCacheConfirm = false },
+                        title = { Text("确认清空所有离线缓存？") },
+                        text = { Text("清空后所有已下载章节的离线文件将被清除，不影响已保存在书架上的书籍及阅读进度。") },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        BookCacheEngine.clearAllCache()
+                                        cacheSizeBytes = BookCacheEngine.getCacheTotalSizeBytes()
+                                        showClearCacheConfirm = false
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Text("确认清空")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showClearCacheConfirm = false }) {
+                                Text("取消")
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        // 4. Text Clean & Replace Rules Card
         OutlinedCard(
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth()
