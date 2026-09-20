@@ -62,7 +62,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "LegadoDesktop"
-            packageVersion = "1.3.0"
+            packageVersion = "1.4.0"
             description = "Legado with MD3 for Windows"
             copyright = "© 2026 Legado Community"
             vendor = "Legado Open Source"

@@ -19,10 +19,18 @@
 
 ---
 
-## 2. 自动化单元测试用例矩阵 (39/39 100% 通过)
+## 2. 自动化单元测试用例矩阵 (44/44 100% 通过)
 
 | 测试类 (Test Class) | 测试用例方法 | 验证领域与断言目标 | 执行耗时 |
 | :--- | :--- | :--- | :--- |
+| **`BookCacheEngineTest`** | `testCacheWriteAndReadConsistency` | 验证本地磁盘缓存的 MD5 目录隔离、异步安全读写与内容一致性 | ~35 ms |
+| | `testCacheDirectorySizeCalculation` | 验证多级书籍目录递归字节统计与 MB/GB 智能格式化精度 | ~10 ms |
+| | `testClearBookCache` | 验证单本书籍缓存精准清除与全库缓存一键重置生命周期 | ~15 ms |
+| **`TextPagingEngineTest`** | `testPageTurnModeEnumParsing` | 验证翻页模式枚举解析、默认回退与兼容性 | ~1 ms |
+| | `testSplitParagraphIntoLines` | 验证 CJK(1.0) 与 ASCII(0.55) 字符视觉加权折行与行尾防溢出 | ~2 ms |
+| | `testEmptyContentPaging` | 验证正文为空或纯空白字符时的安全分页兜底与防御 | ~1 ms |
+| | `testPagingSplitsContentAcrossMultiplePages` | 验证长篇正文根据视口高度、行高、段间距精准切分成多虚拟页 | ~2 ms |
+| | `testFontSizeAffectsPageCount` | 验证字体缩放（小字号 vs 大字号）与总页数的反比伸缩逻辑 | ~2 ms |
 | **`BookSourceEngineTest`** | `testParseBookSourcesJson` | 验证 Legado 3.0 书源 JSON 反序列化及多属性兼容性 | ~15 ms |
 | | `testRuleAnalyzer` | 验证 Jsoup CSS 选择器、属性提取与正则表达式净化组合 | ~10 ms |
 | | `testJsEngineEvaluation` | 验证 Mozilla Rhino 沙箱环境及 `java.ajax`、`java.base64Encode` 宿主注入 | ~35 ms |
