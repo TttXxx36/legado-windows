@@ -26,8 +26,8 @@ docs/
 
 | 文档模块 | 核心内容 | 目标受众 |
 | :--- | :--- | :--- |
-| **[🗺️ 开发路线图 (ROADMAP)](planning/ROADMAP.md)** | Phase 1 (MVP 基线) 至 Phase 8 (离线批量缓存与仿真滑动翻页) 的完整里程碑演进记录与未来规划 | 开发者、产品关注者 |
-| **[🧪 测试指南 (TESTING_GUIDE)](testing/TESTING_GUIDE.md)** | 13 大单元测试套件（44 项用例）全量矩阵、CI/CD 自动化集成、冷启动 $\le 1.8\text{s}$ / 内存 $\le 120\text{MB}$ 等量化性能门禁 | QA 测试人员、核心贡献者 |
+| **[🗺️ 开发路线图 (ROADMAP)](planning/ROADMAP.md)** | Phase 1 (MVP 基线) 至 Phase 13 (v1.8.0 极美排版与纸质质感版：避头尾禁则与标点悬挂、首字艺术下沉、卷首装饰、无边框原生灯箱、Skia温润纸质微噪点) 的完整里程碑演进记录与未来规划 | 开发者、产品关注者 |
+| **[🧪 测试指南 (TESTING_GUIDE)](testing/TESTING_GUIDE.md)** | 18 大单元测试套件（69 项用例 100% 通过）全量矩阵、CI/CD 自动化集成、冷启动 $\le 1.8\text{s}$ / 内存 $\le 120\text{MB}$ 等量化性能门禁 | QA 测试人员、核心贡献者 |
 | **[🛡️ 安全审计报告 (AUDIT_REPORT)](audit/AUDIT_REPORT.md)** | AppData 数据沙箱隔离、Rhino JS 执行安全、WebDAV 传输安全、GPL-3.0 开源许可合规分析 | 技术审核、安全审计人员 |
 | **[💡 核心突破剖析 (CORE_BREAKTHROUGHS)](breakthroughs/CORE_BREAKTHROUGHS.md)** | Legado 3.0 解析引擎、双页图书排版、SAPI 原生语音、EPUB 容器解包等底层技术突破与产品演进复盘 | 架构师、技术发烧友 |
 

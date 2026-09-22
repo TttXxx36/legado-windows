@@ -112,6 +112,25 @@ object AppDatabase {
                     """.trimIndent()
                 )
 
+                // Book Annotations table (Highlights & Notes)
+                stmt.executeUpdate(
+                    """
+                    CREATE TABLE IF NOT EXISTS annotations (
+                        id INTEGER PRIMARY KEY,
+                        bookUrl TEXT NOT NULL,
+                        bookName TEXT NOT NULL,
+                        chapterIndex INTEGER NOT NULL,
+                        chapterTitle TEXT NOT NULL,
+                        selectedText TEXT NOT NULL,
+                        note TEXT,
+                        colorType TEXT NOT NULL,
+                        startOffset INTEGER DEFAULT 0,
+                        endOffset INTEGER DEFAULT 0,
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+
                 // Replace Rules table
                 stmt.executeUpdate(
                     """
@@ -235,6 +254,10 @@ object AppDatabase {
                 stmt.executeUpdate()
             }
             conn.prepareStatement("DELETE FROM bookmarks WHERE bookUrl = ?").use { stmt ->
+                stmt.setString(1, bookUrl)
+                stmt.executeUpdate()
+            }
+            conn.prepareStatement("DELETE FROM annotations WHERE bookUrl = ?").use { stmt ->
                 stmt.setString(1, bookUrl)
                 stmt.executeUpdate()
             }
@@ -443,6 +466,113 @@ object AppDatabase {
         getConnection().use { conn ->
             conn.prepareStatement("DELETE FROM bookmarks WHERE id = ?").use { stmt ->
                 stmt.setLong(1, id)
+                stmt.executeUpdate()
+            }
+        }
+    }
+
+    // --- Annotations CRUD ---
+    suspend fun getAnnotations(bookUrl: String? = null): List<BookAnnotation> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<BookAnnotation>()
+        getConnection().use { conn ->
+            val sql = if (bookUrl == null) {
+                "SELECT * FROM annotations ORDER BY createdAt DESC"
+            } else {
+                "SELECT * FROM annotations WHERE bookUrl = ? ORDER BY chapterIndex ASC, startOffset ASC, createdAt ASC"
+            }
+            conn.prepareStatement(sql).use { stmt ->
+                if (bookUrl != null) stmt.setString(1, bookUrl)
+                val rs = stmt.executeQuery()
+                while (rs.next()) {
+                    list.add(
+                        BookAnnotation(
+                            id = rs.getLong("id"),
+                            bookUrl = rs.getString("bookUrl"),
+                            bookName = rs.getString("bookName"),
+                            chapterIndex = rs.getInt("chapterIndex"),
+                            chapterTitle = rs.getString("chapterTitle"),
+                            selectedText = rs.getString("selectedText"),
+                            note = rs.getString("note") ?: "",
+                            colorType = rs.getString("colorType") ?: "YELLOW",
+                            startOffset = rs.getInt("startOffset"),
+                            endOffset = rs.getInt("endOffset"),
+                            createdAt = rs.getLong("createdAt")
+                        )
+                    )
+                }
+            }
+        }
+        list
+    }
+
+    suspend fun getChapterAnnotations(bookUrl: String, chapterIndex: Int): List<BookAnnotation> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<BookAnnotation>()
+        getConnection().use { conn ->
+            val sql = "SELECT * FROM annotations WHERE bookUrl = ? AND chapterIndex = ? ORDER BY startOffset ASC, createdAt ASC"
+            conn.prepareStatement(sql).use { stmt ->
+                stmt.setString(1, bookUrl)
+                stmt.setInt(2, chapterIndex)
+                val rs = stmt.executeQuery()
+                while (rs.next()) {
+                    list.add(
+                        BookAnnotation(
+                            id = rs.getLong("id"),
+                            bookUrl = rs.getString("bookUrl"),
+                            bookName = rs.getString("bookName"),
+                            chapterIndex = rs.getInt("chapterIndex"),
+                            chapterTitle = rs.getString("chapterTitle"),
+                            selectedText = rs.getString("selectedText"),
+                            note = rs.getString("note") ?: "",
+                            colorType = rs.getString("colorType") ?: "YELLOW",
+                            startOffset = rs.getInt("startOffset"),
+                            endOffset = rs.getInt("endOffset"),
+                            createdAt = rs.getLong("createdAt")
+                        )
+                    )
+                }
+            }
+        }
+        list
+    }
+
+    suspend fun insertAnnotation(annotation: BookAnnotation) = withContext(Dispatchers.IO) {
+        getConnection().use { conn ->
+            val sql = """
+                INSERT OR REPLACE INTO annotations (
+                    id, bookUrl, bookName, chapterIndex, chapterTitle,
+                    selectedText, note, colorType, startOffset, endOffset, createdAt
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent()
+            conn.prepareStatement(sql).use { stmt ->
+                stmt.setLong(1, annotation.id)
+                stmt.setString(2, annotation.bookUrl)
+                stmt.setString(3, annotation.bookName)
+                stmt.setInt(4, annotation.chapterIndex)
+                stmt.setString(5, annotation.chapterTitle)
+                stmt.setString(6, annotation.selectedText)
+                stmt.setString(7, annotation.note)
+                stmt.setString(8, annotation.colorType)
+                stmt.setInt(9, annotation.startOffset)
+                stmt.setInt(10, annotation.endOffset)
+                stmt.setLong(11, annotation.createdAt)
+                stmt.executeUpdate()
+            }
+        }
+    }
+
+    suspend fun deleteAnnotation(id: Long) = withContext(Dispatchers.IO) {
+        getConnection().use { conn ->
+            conn.prepareStatement("DELETE FROM annotations WHERE id = ?").use { stmt ->
+                stmt.setLong(1, id)
+                stmt.executeUpdate()
+            }
+        }
+    }
+
+    suspend fun deleteAnnotationsForBook(bookUrl: String) = withContext(Dispatchers.IO) {
+        getConnection().use { conn ->
+            conn.prepareStatement("DELETE FROM annotations WHERE bookUrl = ?").use { stmt ->
+                stmt.setString(1, bookUrl)
                 stmt.executeUpdate()
             }
         }

@@ -845,4 +845,54 @@ object LegadoIcons {
             close()
         }
     }
+
+    val ContentCopy: ImageVector by lazy {
+        buildIcon("ContentCopy") {
+            moveTo(16f, 1f)
+            horizontalLineTo(4f)
+            curveTo(2.9f, 1f, 2f, 1.9f, 2f, 3f)
+            verticalLineTo(17f)
+            horizontalLineTo(4f)
+            verticalLineTo(3f)
+            horizontalLineTo(16f)
+            verticalLineTo(1f)
+            close()
+            moveTo(19f, 5f)
+            horizontalLineTo(8f)
+            curveTo(6.9f, 5f, 6f, 5.9f, 6f, 7f)
+            verticalLineTo(21f)
+            curveTo(6f, 22.1f, 6.9f, 23f, 8f, 23f)
+            horizontalLineTo(19f)
+            curveTo(20.1f, 23f, 21f, 22.1f, 21f, 21f)
+            verticalLineTo(7f)
+            curveTo(21f, 5.9f, 20.1f, 5f, 19f, 5f)
+            close()
+            moveTo(19f, 21f)
+            horizontalLineTo(8f)
+            verticalLineTo(7f)
+            horizontalLineTo(19f)
+            verticalLineTo(21f)
+            close()
+        }
+    }
+
+    val Edit: ImageVector by lazy {
+        buildIcon("Edit") {
+            moveTo(3f, 17.25f)
+            verticalLineTo(21f)
+            horizontalLineTo(6.75f)
+            lineTo(17.81f, 9.94f)
+            lineTo(14.06f, 6.19f)
+            lineTo(3f, 17.25f)
+            close()
+            moveTo(20.71f, 7.04f)
+            curveTo(21.1f, 6.65f, 21.1f, 6.02f, 20.71f, 5.63f)
+            lineTo(18.37f, 3.29f)
+            curveTo(17.98f, 2.9f, 17.35f, 2.9f, 16.96f, 3.29f)
+            lineTo(15.13f, 5.12f)
+            lineTo(18.88f, 8.87f)
+            lineTo(20.71f, 7.04f)
+            close()
+        }
+    }
 }

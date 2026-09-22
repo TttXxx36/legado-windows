@@ -91,7 +91,8 @@ fun main() = application {
         LegadoTheme(darkTheme = darkTheme) {
             AppShell(
                 darkTheme = darkTheme,
-                onToggleTheme = { darkTheme = !darkTheme }
+                onToggleTheme = { darkTheme = !darkTheme },
+                window = window
             )
         }
     }

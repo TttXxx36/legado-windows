@@ -1,6 +1,7 @@
 package io.legado.desktop.ui
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -61,7 +62,8 @@ enum class NavDestination(
 @Composable
 fun AppShell(
     darkTheme: Boolean,
-    onToggleTheme: () -> Unit
+    onToggleTheme: () -> Unit,
+    window: java.awt.Window? = null
 ) {
     var currentDestination by remember { mutableStateOf(NavDestination.BOOKSHELF) }
     var activeReadingBook by remember { mutableStateOf<Book?>(null) }
@@ -70,6 +72,89 @@ fun AppShell(
     val books = remember { mutableStateListOf<Book>() }
     val sources = remember { mutableStateListOf<BookSource>() }
     val globalDownloadProgress by BookCacheEngine.downloadProgress.collectAsState()
+
+    // Windows Native Drag & Drop State
+    var isDraggingOver by remember { mutableStateOf(false) }
+    var dragToastMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(dragToastMessage) {
+        if (dragToastMessage != null) {
+            kotlinx.coroutines.delay(3500L)
+            dragToastMessage = null
+        }
+    }
+
+    DisposableEffect(window) {
+        if (window == null) return@DisposableEffect onDispose {}
+
+        val dropTarget = object : java.awt.dnd.DropTarget() {
+            override fun dragEnter(dtde: java.awt.dnd.DropTargetDragEvent) {
+                if (dtde.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor)) {
+                    dtde.acceptDrag(java.awt.dnd.DnDConstants.ACTION_COPY)
+                    isDraggingOver = true
+                } else {
+                    dtde.rejectDrag()
+                }
+            }
+
+            override fun dragOver(dtde: java.awt.dnd.DropTargetDragEvent) {
+                if (dtde.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor)) {
+                    dtde.acceptDrag(java.awt.dnd.DnDConstants.ACTION_COPY)
+                    isDraggingOver = true
+                }
+            }
+
+            override fun dragExit(dte: java.awt.dnd.DropTargetEvent) {
+                isDraggingOver = false
+            }
+
+            override fun drop(dtde: java.awt.dnd.DropTargetDropEvent) {
+                isDraggingOver = false
+                try {
+                    dtde.acceptDrop(java.awt.dnd.DnDConstants.ACTION_COPY)
+                    val transferable = dtde.transferable
+                    if (transferable.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor)) {
+                        val droppedFiles = transferable.getTransferData(java.awt.datatransfer.DataFlavor.javaFileListFlavor) as? List<*>
+                        val bookFiles = droppedFiles?.filterIsInstance<java.io.File>()?.filter {
+                            it.extension.equals("txt", ignoreCase = true) || it.extension.equals("epub", ignoreCase = true)
+                        } ?: emptyList()
+
+                        if (bookFiles.isNotEmpty()) {
+                            scope.launch {
+                                var successCount = 0
+                                val importedNames = mutableListOf<String>()
+                                for (file in bookFiles) {
+                                    try {
+                                        val imported = LocalBookImporter.importBook(file)
+                                        if (!books.any { it.bookUrl == imported.bookUrl }) {
+                                            books.add(0, imported)
+                                        }
+                                        importedNames.add("《${imported.name}》")
+                                        successCount++
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
+                                }
+                                if (successCount > 0) {
+                                    dragToastMessage = "成功导入 $successCount 本书籍：${importedNames.take(2).joinToString("、")}${if (successCount > 2) " 等" else ""}"
+                                }
+                            }
+                            dtde.dropComplete(true)
+                            return
+                        }
+                    }
+                    dtde.dropComplete(false)
+                } catch (_: Exception) {
+                    dtde.dropComplete(false)
+                }
+            }
+        }
+
+        window.dropTarget = dropTarget
+        onDispose {
+            window.dropTarget = null
+        }
+    }
 
     // Load initial data from SQLite
     LaunchedEffect(Unit) {
@@ -133,7 +218,8 @@ fun AppShell(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        Row(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Row(modifier = Modifier.fillMaxSize()) {
             // Material Design 3 Navigation Rail
             NavigationRail(
                 modifier = Modifier.fillMaxHeight(),
@@ -230,9 +316,24 @@ fun AppShell(
                         .align(Alignment.BottomEnd)
                         .padding(end = 12.dp, bottom = 12.dp)
                 )
+
+                // Drag and Drop Toast Notification
+                DragToastNotification(
+                    message = dragToastMessage,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 16.dp)
+                )
             }
         }
+
+        // Full Window Drag & Drop Overlay
+        DragDropOverlay(
+            visible = isDraggingOver,
+            modifier = Modifier.fillMaxSize()
+        )
     }
+}
 }
 
 @Composable
@@ -311,6 +412,99 @@ fun GlobalDownloadPill(
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DragToastNotification(
+    message: String?,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = message != null,
+        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        modifier = modifier
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            shadowElevation = 6.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    LegadoIcons.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = message ?: "",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun DragDropOverlay(
+    visible: Boolean,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = modifier
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.65f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                shadowElevation = 16.dp,
+                border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+                modifier = Modifier.padding(32.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 48.dp, vertical = 36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = LegadoIcons.CloudDownload,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "📥 松开鼠标即可将书籍导入书架",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "支持 .TXT（智能流式分章秒开）与 .EPUB 格式，支持多文件批量拖入",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

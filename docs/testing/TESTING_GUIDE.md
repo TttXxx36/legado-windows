@@ -10,7 +10,7 @@
 - **CI/CD 自动化验证**：每次代码推送到 `main` 分支或发起 Pull Request 时，GitHub Actions 在 `windows-latest` 虚拟机上自动触发全量构建与测试门禁（参见 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)）。
 - **本地一键运行测试**：
   ```powershell
-  # 运行全部 13 项单元测试
+  # 运行全部 18 大类 69 项单元测试
   .\gradlew.bat jvmTest
   
   # 查看 HTML 测试报告
@@ -19,7 +19,7 @@
 
 ---
 
-## 2. 自动化单元测试用例矩阵 (44/44 100% 通过)
+## 2. 自动化单元测试用例矩阵 (69/69 100% 通过)
 
 | 测试类 (Test Class) | 测试用例方法 | 验证领域与断言目标 | 执行耗时 |
 | :--- | :--- | :--- | :--- |
@@ -67,6 +67,31 @@
 | | `testResilientSkipCorruptedElements` | 验证单项损坏时防御性跳过，最大化抢救有效书源 | ~6 ms |
 | **`ClickZoneEngineTest`** | `testClickZoneActionFromId` | 验证点击动作 ID 枚举查找与默认回退保护 | ~1 ms |
 | | `testClickZoneCoordinatePartition` | 验证 25:50:25 与 33:34:33 比例下的横坐标点击命中算法 | ~2 ms |
+| **`Phase9FeatureTest`** | `testDualPageSpreadLayoutSplittingEvenPages` | 验证大屏视口双栏划分、偶数页双对开拆分与步进 2 计算 | ~2 ms |
+| | `testDualPageCrossChapterSeamlessStitching` | 验证奇数尾页跨章节预拉取与下一章第 1 页并排无缝拼接 | ~2 ms |
+| | `testDualPageEndOfBookWhenOddPages` | 验证全书终章奇数尾页“全书完”印章与状态自闭环 | ~1 ms |
+| | `testMouseWheelDampingAccumulator` | 验证滚轮位移累积阈值 (1.0f) 与 250ms 防抖算法防暴滑 | ~2 ms |
+| | `testStatusBarProgressCalculation` | 验证四角状态栏全书进度百分比安全算式与边界兜底 | ~1 ms |
+| **`Phase10FeatureTest`** | `testReadThemeMatrixAndIds` | 验证 8 款主题枚举、从 ID 安全反查与未知值回退 | ~2 ms |
+| | `testParseHexColorHelper` | 验证 6 位与 8 位 Hex 颜色字符串解析与异常回退防御 | ~1 ms |
+| | `testInChapterSearchSinglePage` | 验证单页正文内关键词搜索命中索引、长度与上下文引语 | ~2 ms |
+| | `testInChapterSearchMultiPageDistribution` | 验证跨虚拟页搜索结果的多页精准映射分发 | ~2 ms |
+| | `testInChapterSearchCaseInsensitiveAndEdgeCases` | 验证忽略大小写检索、空查询及边界防御 | ~1 ms |
+| **`Phase11FeatureTest`** | `testPortableLocalBooksDirectoryResolution` | 验证本地程序解压目录 `./local_books` 优先解析、存在性与读写权限 | ~3 ms |
+| | `testLargeTxtByteOffsetScanningAndRandomAccessRead` | 验证大文本单遍字符流扫描、字节偏移量区间与 RandomAccessFile 毫秒精准 Seek 读取 | ~15 ms |
+| | `testPresetRegexesMatching` | 验证标准中文、英文字段、数字序号、网络符号 4 套分章预设正则匹配 | ~2 ms |
+| | `testPreviewSplitAndReSplitTxtBook` | 验证实时分章匹配预览（命中数、样本标题）与一键重整目录索引 | ~8 ms |
+| | `testFileResolutionAndFallback` | 验证移动目录/盘符变动下的相对路径重定位与只读安全回退 | ~2 ms |
+| **`Phase12FeatureTest`** | `testAnnotationDatabaseCrudAndCascadeDelete` | 验证划线模型 SQLite CRUD、多颜色类型、时间戳及删除书籍时级联清理 | ~8 ms |
+| | `testMarkdownExportEngineFormatting` | 验证 MarkdownExportEngine 导出结构化 Markdown、章节引用块、想法与徽标 | ~3 ms |
+| | `testSkiaHighlightAndAnnotationLayering` | 验证 Skia 双层渲染：划线样式叠加与关键字搜索高亮双图层互不冲突 | ~2 ms |
+| | `testMarkdownSpecialCharactersAndMultilineNotes` | 验证多行划线换行引用与用户多行想法笔记排版格式保持 | ~2 ms |
+| | `testColorToBadgeMapping` | 验证多色类型与 Emoji 徽标映射及异常色彩向下容错 | ~1 ms |
+| **`Phase13FeatureTest`** | `testKinsokuHeadForbiddenRule` | 验证中文严格避头尾禁则：后置标点（逗号、句号、闭括号等）绝不单独出现在行首 | ~2 ms |
+| | `testKinsokuTailForbiddenRule` | 验证中文严格避头尾禁则：前置标点（开引号、书名号等）绝不单独孤立在行尾 | ~2 ms |
+| | `testPunctuationHangingAlignment` | 验证行末标点智能微悬挂机制：行尾标点伸出版心外侧微小容差，消灭孤点孤行 | ~1 ms |
+| | `testDropCapsFirstCharStyling` | 验证章节首段首字大字下沉提取逻辑（跳过全角缩进）、28sp ExtraBold 样式注入与开关回退 | ~3 ms |
+| | `testPhase13SettingsPersistence` | 验证避头尾、首字下沉、卷首装饰、温润纸质微噪点开关与浮点浓度 SQLite 持久化 | ~5 ms |
 
 ---
 
@@ -83,7 +108,7 @@
 │ 应用冷启动耗时        │ ≤ 1.8 s              │ 1.2 ~ 1.5 s   │
 │ 书架静置内存占用      │ ≤ 120 MB             │ 88 ~ 105 MB   │
 │ 连续翻阅 10,000 章内存│ ≤ 220 MB             │ 145 ~ 180 MB  │
-│ 本地 10MB TXT 分章耗时│ ≤ 800 ms             │ 320 ~ 450 ms  │
+│ 本地 10MB TXT 分章耗时│ ≤ 300 ms (流式索引)  │ 80 ~ 150 ms   │
 │ 单书源并发搜索延迟    │ ≤ 500 ms             │ 80 ~ 260 ms   │
 │ 窗口缩放 FPS          │ ≥ 55 FPS             │ 58 ~ 60 FPS   │
 └──────────────────────┴──────────────────────┴───────────────┘

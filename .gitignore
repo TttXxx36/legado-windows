@@ -16,3 +16,6 @@ local.properties
 hs_err_pid*
 Thumbs.db
 .DS_Store
+
+# Local Portable Books Storage
+local_books/
