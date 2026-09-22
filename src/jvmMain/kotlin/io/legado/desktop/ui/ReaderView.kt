@@ -266,7 +266,7 @@ fun ReaderView(
 
     // Phase 13 Typography Aesthetics & Paper Texture States
     var enableKinsoku by remember { mutableStateOf(true) }
-    var enableDropCaps by remember { mutableStateOf(true) }
+    var enableDropCaps by remember { mutableStateOf(false) }
     var enableArtTitle by remember { mutableStateOf(true) }
     var enablePaperTexture by remember { mutableStateOf(true) }
     var paperTextureAlpha by remember { mutableStateOf(0.06f) }
@@ -472,9 +472,9 @@ fun ReaderView(
     var isImmersive by remember { mutableStateOf(false) }
 
     // Screen Click Zones Preferences
-    var leftClickAction by remember { mutableStateOf(ClickZoneAction.PAGE_PREV) }
+    var leftClickAction by remember { mutableStateOf(ClickZoneAction.PREV_CHAPTER) }
     var centerClickAction by remember { mutableStateOf(ClickZoneAction.TOGGLE_MENU) }
-    var rightClickAction by remember { mutableStateOf(ClickZoneAction.PAGE_NEXT) }
+    var rightClickAction by remember { mutableStateOf(ClickZoneAction.NEXT_CHAPTER) }
     var clickRatioIndex by remember { mutableStateOf(0) } // 0: 25-50-25, 1: 33-34-33, 2: 20-60-20
 
     val (leftRatio, rightRatio) = remember(clickRatioIndex) {
@@ -647,19 +647,29 @@ fun ReaderView(
             fontName = savedName
         }
 
-        val savedLeft = AppDatabase.getConfig("reader_click_left_action", ClickZoneAction.PAGE_PREV.id)
-        val savedCenter = AppDatabase.getConfig("reader_click_center_action", ClickZoneAction.TOGGLE_MENU.id)
-        val savedRight = AppDatabase.getConfig("reader_click_right_action", ClickZoneAction.PAGE_NEXT.id)
-        val savedRatio = AppDatabase.getConfig("reader_click_ratio", "0").toIntOrNull() ?: 0
+        val savedLeft = AppDatabase.getConfig("reader_click_left_action", "")
+        leftClickAction = if (savedLeft.isBlank() || savedLeft == ClickZoneAction.PAGE_PREV.id) {
+            ClickZoneAction.PREV_CHAPTER
+        } else {
+            ClickZoneAction.fromId(savedLeft, ClickZoneAction.PREV_CHAPTER)
+        }
 
-        leftClickAction = ClickZoneAction.fromId(savedLeft, ClickZoneAction.PAGE_PREV)
+        val savedCenter = AppDatabase.getConfig("reader_click_center_action", ClickZoneAction.TOGGLE_MENU.id)
         centerClickAction = ClickZoneAction.fromId(savedCenter, ClickZoneAction.TOGGLE_MENU)
-        rightClickAction = ClickZoneAction.fromId(savedRight, ClickZoneAction.PAGE_NEXT)
+
+        val savedRight = AppDatabase.getConfig("reader_click_right_action", "")
+        rightClickAction = if (savedRight.isBlank() || savedRight == ClickZoneAction.PAGE_NEXT.id) {
+            ClickZoneAction.NEXT_CHAPTER
+        } else {
+            ClickZoneAction.fromId(savedRight, ClickZoneAction.NEXT_CHAPTER)
+        }
+        val savedRatio = AppDatabase.getConfig("reader_click_ratio", "0").toIntOrNull() ?: 0
         clickRatioIndex = savedRatio
 
         // Load 5-Dimension Typography & Page Turn Mode
         val savedMode = AppDatabase.getConfig("reader_page_turn_mode", PageTurnMode.SCROLL.id)
         pageTurnMode = PageTurnMode.fromId(savedMode)
+        isDualPage = (pageTurnMode == PageTurnMode.DUAL_PAGE)
 
         val savedLineSpacing = AppDatabase.getConfig("reader_line_spacing", "1.75").toFloatOrNull() ?: 1.75f
         lineSpacingMultiplier = savedLineSpacing
@@ -679,7 +689,7 @@ fun ReaderView(
         val savedKinsoku = AppDatabase.getConfig("reader_kinsoku", "true").toBooleanStrictOrNull() ?: true
         enableKinsoku = savedKinsoku
 
-        val savedDropCaps = AppDatabase.getConfig("reader_drop_caps", "true").toBooleanStrictOrNull() ?: true
+        val savedDropCaps = AppDatabase.getConfig("reader_drop_caps", "false").toBooleanStrictOrNull() ?: false
         enableDropCaps = savedDropCaps
 
         val savedArtTitle = AppDatabase.getConfig("reader_art_title", "true").toBooleanStrictOrNull() ?: true
@@ -1491,100 +1501,125 @@ fun ReaderView(
                 }
             } else {
                 // Centered single column continuous vertical scroll
-                Column(
+                Box(
                     modifier = Modifier
-                        .widthIn(max = 840.dp)
-                        .fillMaxHeight()
-                        .padding(horizontal = horizontalPaddingDp.dp, vertical = 40.dp)
-                        .verticalScroll(scrollState)
+                        .fillMaxSize()
+                        .verticalScroll(scrollState),
+                    contentAlignment = Alignment.TopCenter
                 ) {
-                    if (showStatusBar) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "${book.name} · $currentChapterTitle",
-                                fontSize = 12.sp,
-                                color = themeText.copy(alpha = 0.5f),
-                                fontFamily = activeFontFamily,
-                                maxLines = 1,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                text = currentTimeStr,
-                                fontSize = 12.sp,
-                                color = themeText.copy(alpha = 0.5f),
-                                fontFamily = activeFontFamily
-                            )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = horizontalPaddingDp.dp, vertical = 40.dp)
+                            .widthIn(max = 1000.dp)
+                    ) {
+                        if (showStatusBar) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${book.name} · $currentChapterTitle",
+                                    fontSize = 12.sp,
+                                    color = themeText.copy(alpha = 0.5f),
+                                    fontFamily = activeFontFamily,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = currentTimeStr,
+                                    fontSize = 12.sp,
+                                    color = themeText.copy(alpha = 0.5f),
+                                    fontFamily = activeFontFamily
+                                )
+                            }
                         }
-                    }
 
-                    Text(
-                        text = currentChapterTitle,
-                        fontSize = (fontSize + 6).sp,
-                        fontWeight = FontWeight.Bold,
-                        color = themeText,
-                        fontFamily = activeFontFamily
-                    )
-                    if (enableArtTitle) {
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "❖ ─── ✦ ─── ❖",
-                                fontSize = 13.sp,
-                                color = themeText.copy(alpha = 0.45f),
-                                letterSpacing = 2.sp
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(20.dp))
-                    SelectionContainer {
                         Text(
-                            text = buildHighlightedText(
-                                chapterContent,
-                                searchQuery,
-                                searchMatches.getOrNull(currentSearchMatchIndex)?.snippet,
-                                chapterAnnotations,
-                                isFirstPage = true,
-                                enableDropCaps = enableDropCaps
-                            ),
-                            fontSize = fontSize.sp,
-                            lineHeight = (fontSize * lineSpacingMultiplier).sp,
+                            text = currentChapterTitle,
+                            fontSize = (fontSize + 6).sp,
+                            fontWeight = FontWeight.Bold,
                             color = themeText,
-                            letterSpacing = 0.6.sp,
                             fontFamily = activeFontFamily
                         )
-                    }
-
-                    if (showStatusBar) {
-                        Spacer(Modifier.height(24.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "全书进度：第 ${currentChapterIndex + 1} / ${chapters.size} 章 (${if (chapters.isNotEmpty()) ((currentChapterIndex + 1) * 100 / chapters.size) else 0}%)",
-                                fontSize = 12.sp,
-                                color = themeText.copy(alpha = 0.45f),
-                                fontFamily = activeFontFamily
-                            )
-                            Text(
-                                text = "本章共 ${chapterContent.length} 字",
-                                fontSize = 12.sp,
-                                color = themeText.copy(alpha = 0.45f),
-                                fontFamily = activeFontFamily
-                            )
+                        if (enableArtTitle) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "❖ ─── ✦ ─── ❖",
+                                    fontSize = 13.sp,
+                                    color = themeText.copy(alpha = 0.45f),
+                                    letterSpacing = 2.sp
+                                )
+                            }
                         }
-                    }
+                        Spacer(Modifier.height(20.dp))
+                        SelectionContainer {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(paragraphSpacingDp.dp)
+                            ) {
+                                val displayParagraphs = remember(chapterContent, firstLineIndent) {
+                                    if (chapterContent.isBlank()) emptyList()
+                                    else {
+                                        chapterContent.lines().filter { it.isNotBlank() }.map { line ->
+                                            val trimmed = line.trimEnd('\r')
+                                            if (firstLineIndent && !trimmed.startsWith("　　") && !trimmed.startsWith("  ")) {
+                                                "　　$trimmed"
+                                            } else {
+                                                trimmed
+                                            }
+                                        }
+                                    }
+                                }
+                                displayParagraphs.forEachIndexed { pIndex, para ->
+                                    Text(
+                                        text = buildHighlightedText(
+                                            para,
+                                            searchQuery,
+                                            searchMatches.getOrNull(currentSearchMatchIndex)?.snippet,
+                                            chapterAnnotations,
+                                            isFirstPage = (pIndex == 0),
+                                            enableDropCaps = enableDropCaps
+                                        ),
+                                        fontSize = fontSize.sp,
+                                        lineHeight = (fontSize * lineSpacingMultiplier).sp,
+                                        color = themeText,
+                                        letterSpacing = 0.6.sp,
+                                        fontFamily = activeFontFamily
+                                    )
+                                }
+                            }
+                        }
 
-                    Spacer(Modifier.height(80.dp))
+                        if (showStatusBar) {
+                            Spacer(Modifier.height(24.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "全书进度：第 ${currentChapterIndex + 1} / ${chapters.size} 章 (${if (chapters.isNotEmpty()) ((currentChapterIndex + 1) * 100 / chapters.size) else 0}%)",
+                                    fontSize = 12.sp,
+                                    color = themeText.copy(alpha = 0.45f),
+                                    fontFamily = activeFontFamily
+                                )
+                                Text(
+                                    text = "本章共 ${chapterContent.length} 字",
+                                    fontSize = 12.sp,
+                                    color = themeText.copy(alpha = 0.45f),
+                                    fontFamily = activeFontFamily
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(80.dp))
+                    }
                 }
             }
             } // end CompositionLocalProvider
@@ -1743,7 +1778,13 @@ fun ReaderView(
                             )
                         }
 
-                        IconButton(onClick = { isDualPage = !isDualPage }) {
+                        IconButton(onClick = {
+                            isDualPage = !isDualPage
+                            pageTurnMode = if (isDualPage) PageTurnMode.DUAL_PAGE else PageTurnMode.SLIDE_PAGING
+                            scope.launch {
+                                AppDatabase.setConfig("reader_page_turn_mode", pageTurnMode.id)
+                            }
+                        }) {
                             Icon(
                                 if (isDualPage) LegadoIcons.ViewAgenda else LegadoIcons.AutoStories,
                                 contentDescription = "切换单/双页模式"
@@ -2693,17 +2734,34 @@ fun ReaderView(
                             verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
                             Text("翻页交互模式", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
                                 PageTurnMode.entries.forEach { mode ->
                                     FilterChip(
+                                        modifier = Modifier.weight(1f),
                                         selected = pageTurnMode == mode,
                                         onClick = {
                                             pageTurnMode = mode
+                                            isDualPage = (mode == PageTurnMode.DUAL_PAGE)
                                             scope.launch {
                                                 AppDatabase.setConfig("reader_page_turn_mode", mode.id)
                                             }
                                         },
-                                        label = { Text(mode.title) }
+                                        label = {
+                                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    when (mode) {
+                                                        PageTurnMode.SCROLL -> "平滑滚动"
+                                                        PageTurnMode.SLIDE_PAGING -> "单页平移"
+                                                        PageTurnMode.DUAL_PAGE -> "双页对开"
+                                                    },
+                                                    maxLines = 1,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -2801,10 +2859,14 @@ fun ReaderView(
                             }
 
                             Text("页面左右边距", style = MaterialTheme.typography.bodySmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                val paddings = listOf(Pair(16, "紧凑 (16dp)"), Pair(32, "适中 (32dp)"), Pair(64, "宽裕 (64dp)"))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val paddings = listOf(Pair(16, "紧凑 (16)"), Pair(32, "适中 (32)"), Pair(64, "宽裕 (64)"))
                                 paddings.forEach { (pad, label) ->
                                     FilterChip(
+                                        modifier = Modifier.weight(1f),
                                         selected = horizontalPaddingDp == pad,
                                         onClick = {
                                             horizontalPaddingDp = pad
@@ -2812,7 +2874,11 @@ fun ReaderView(
                                                 AppDatabase.setConfig("reader_horizontal_padding", pad.toString())
                                             }
                                         },
-                                        label = { Text(label) }
+                                        label = {
+                                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                                Text(label, maxLines = 1, fontSize = 12.sp)
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -3131,14 +3197,18 @@ fun ReaderView(
                                 fontWeight = FontWeight.SemiBold
                             )
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
                                 val ratioLabels = listOf(
-                                    "25% : 50% : 25%",
-                                    "33% : 34% : 33%",
-                                    "20% : 60% : 20%"
+                                    "25:50:25",
+                                    "33:34:33",
+                                    "20:60:20"
                                 )
                                 ratioLabels.forEachIndexed { idx, label ->
                                     FilterChip(
+                                        modifier = Modifier.weight(1f),
                                         selected = clickRatioIndex == idx,
                                         onClick = {
                                             clickRatioIndex = idx
@@ -3146,7 +3216,11 @@ fun ReaderView(
                                                 AppDatabase.setConfig("reader_click_ratio", idx.toString())
                                             }
                                         },
-                                        label = { Text(label) }
+                                        label = {
+                                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                                Text(label, maxLines = 1, fontSize = 12.sp)
+                                            }
+                                        }
                                     )
                                 }
                             }

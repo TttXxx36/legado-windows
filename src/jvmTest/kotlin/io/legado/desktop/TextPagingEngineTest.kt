@@ -11,6 +11,7 @@ class TextPagingEngineTest {
     fun testPageTurnModeEnum() {
         assertEquals(PageTurnMode.SCROLL, PageTurnMode.fromId("scroll"))
         assertEquals(PageTurnMode.SLIDE_PAGING, PageTurnMode.fromId("slide_paging"))
+        assertEquals(PageTurnMode.DUAL_PAGE, PageTurnMode.fromId("dual_page"))
         assertEquals(PageTurnMode.SCROLL, PageTurnMode.fromId("unknown"))
     }
 

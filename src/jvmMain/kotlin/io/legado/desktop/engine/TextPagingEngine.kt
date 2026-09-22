@@ -12,7 +12,8 @@ data class PagedChapter(
 
 enum class PageTurnMode(val id: String, val title: String) {
     SCROLL("scroll", "垂直平滑滚动"),
-    SLIDE_PAGING("slide_paging", "平移仿真分页");
+    SLIDE_PAGING("slide_paging", "单页仿真平移"),
+    DUAL_PAGE("dual_page", "左右双页对开");
 
     companion object {
         fun fromId(id: String): PageTurnMode {
