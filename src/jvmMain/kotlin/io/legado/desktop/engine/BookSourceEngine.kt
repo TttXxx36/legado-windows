@@ -11,6 +11,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
@@ -19,6 +21,21 @@ object BookSourceEngine {
         ignoreUnknownKeys = true
         isLenient = true
         coerceInputValues = true
+    }
+
+    fun parseHeaderMap(headerJson: String?): Map<String, String> {
+        if (headerJson.isNullOrBlank()) return emptyMap()
+        return try {
+            val element = json.parseToJsonElement(headerJson)
+            if (element is JsonObject) {
+                element.mapNotNull { (k, v) ->
+                    val content = v.jsonPrimitive.contentOrNull ?: v.toString().removeSurrounding("\"")
+                    if (content.isNotBlank()) k to content else null
+                }.toMap()
+            } else emptyMap()
+        } catch (_: Exception) {
+            emptyMap()
+        }
     }
 
     fun parseBookSources(jsonString: String): List<BookSource> {
@@ -106,8 +123,9 @@ object BookSourceEngine {
             .replace("{{key}}", encodedKey)
             .replace("{{page}}", page.toString())
 
+        val headers = parseHeaderMap(source.header)
         val html = try {
-            HttpHelper.smartRequest(source.bookSourceUrl, finalUrl)
+            HttpHelper.smartRequest(source.bookSourceUrl, finalUrl, headers)
         } catch (e: Exception) {
             return@withContext emptyList()
         }
@@ -153,12 +171,13 @@ object BookSourceEngine {
     ): List<BookChapter> = withContext(Dispatchers.IO) {
         val tocRule = source.ruleToc ?: return@withContext emptyList()
         var tocUrl = book.tocUrl
+        val headers = parseHeaderMap(source.header)
 
         // Step 1: Resolve tocUrl from ruleBookInfo if book.tocUrl is empty
         if (tocUrl.isBlank() && !source.ruleBookInfo?.tocUrl.isNullOrBlank()) {
             val bookDetailUrl = RuleAnalyzer.resolveUrl(source.bookSourceUrl, book.bookUrl)
             try {
-                val detailHtml = HttpHelper.smartRequest(source.bookSourceUrl, bookDetailUrl)
+                val detailHtml = HttpHelper.smartRequest(source.bookSourceUrl, bookDetailUrl, headers)
                 if (detailHtml.isNotBlank()) {
                     val detailDoc = Jsoup.parse(detailHtml, bookDetailUrl)
                     val extractedToc = RuleAnalyzer.extractString(detailDoc, source.ruleBookInfo?.tocUrl, bookDetailUrl)
@@ -176,7 +195,7 @@ object BookSourceEngine {
         val finalTocUrl = RuleAnalyzer.resolveUrl(source.bookSourceUrl, tocUrl)
 
         val html = try {
-            HttpHelper.smartRequest(source.bookSourceUrl, finalTocUrl)
+            HttpHelper.smartRequest(source.bookSourceUrl, finalTocUrl, headers)
         } catch (e: Exception) {
             return@withContext emptyList()
         }
@@ -219,9 +238,10 @@ object BookSourceEngine {
         val contentRule = source.ruleContent ?: return@withContext "无正文规则"
         val baseRef = if (book.tocUrl.isNotBlank()) book.tocUrl else book.bookUrl
         val finalUrl = RuleAnalyzer.resolveUrl(baseRef.ifBlank { source.bookSourceUrl }, chapter.url)
+        val headers = parseHeaderMap(source.header)
 
         val html = try {
-            HttpHelper.smartRequest(baseRef.ifBlank { source.bookSourceUrl }, finalUrl)
+            HttpHelper.smartRequest(baseRef.ifBlank { source.bookSourceUrl }, finalUrl, headers)
         } catch (e: Exception) {
             return@withContext "加载正文失败: ${e.message}"
         }

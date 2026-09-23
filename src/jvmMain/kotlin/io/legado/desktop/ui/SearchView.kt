@@ -1,6 +1,7 @@
 package io.legado.desktop.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,6 +21,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 
+import io.legado.desktop.engine.search.AggregatedBook
 import io.legado.desktop.engine.search.SearchRelevanceEngine
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -32,7 +34,7 @@ fun SearchView(
     var searchKeyword by remember { mutableStateOf("") }
     var isSearching by remember { mutableStateOf(false) }
     var searchStatus by remember { mutableStateOf<String?>(null) }
-    val searchResults = remember { mutableStateListOf<Book>() }
+    val searchResults = remember { mutableStateListOf<AggregatedBook>() }
 
     fun performSearch() {
         if (searchKeyword.isBlank() || isSearching) return
@@ -62,11 +64,11 @@ fun SearchView(
             }
 
             val rawResults = deferred.awaitAll().flatten()
-            val sorted = SearchRelevanceEngine.sortSearchResults(rawResults, searchKeyword)
+            val aggregated = SearchRelevanceEngine.aggregateSearchResults(rawResults, searchKeyword)
             searchResults.clear()
-            searchResults.addAll(sorted)
+            searchResults.addAll(aggregated)
             isSearching = false
-            searchStatus = if (sorted.isEmpty()) "未找到相关书籍" else "共检索到 ${sorted.size} 本书籍（已按相关度智能排序）"
+            searchStatus = if (aggregated.isEmpty()) "未找到相关书籍" else "共检索到 ${aggregated.size} 本书籍（已智能聚合多书源，按相关度排序）"
         }
     }
 
@@ -152,16 +154,16 @@ fun SearchView(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(searchResults) { book ->
+                items(searchResults) { aggregated ->
                     SearchResultCard(
-                        book = book,
-                        onAddToShelf = {
+                        aggregatedBook = aggregated,
+                        onAddToShelf = { book ->
                             scope.launch {
                                 AppDatabase.insertOrUpdateBook(book)
                                 onBookAddedToShelf(book)
                             }
                         },
-                        onReadNow = {
+                        onReadNow = { book ->
                             scope.launch {
                                 AppDatabase.insertOrUpdateBook(book)
                                 onOpenBook(book)
@@ -176,11 +178,13 @@ fun SearchView(
 
 @Composable
 fun SearchResultCard(
-    book: Book,
-    onAddToShelf: () -> Unit,
-    onReadNow: () -> Unit
+    aggregatedBook: AggregatedBook,
+    onAddToShelf: (Book) -> Unit,
+    onReadNow: (Book) -> Unit
 ) {
-    var added by remember { mutableStateOf(false) }
+    var selectedBook by remember(aggregatedBook) { mutableStateOf(aggregatedBook.primaryBook) }
+    var added by remember(selectedBook) { mutableStateOf(false) }
+    var showSourcePicker by remember { mutableStateOf(false) }
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -212,31 +216,45 @@ fun SearchResultCard(
                     }
                 }
 
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = book.name,
+                            text = selectedBook.name,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        if (book.originName.isNotBlank()) {
+                        if (selectedBook.originName.isNotBlank()) {
                             AssistChip(
-                                onClick = {},
-                                label = { Text(book.originName, style = MaterialTheme.typography.labelSmall) }
+                                onClick = {
+                                    if (aggregatedBook.sourceCount > 1) {
+                                        showSourcePicker = true
+                                    }
+                                },
+                                label = { Text(selectedBook.originName, style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                        if (aggregatedBook.sourceCount > 1) {
+                            FilterChip(
+                                selected = false,
+                                onClick = { showSourcePicker = true },
+                                label = { Text("${aggregatedBook.sourceCount} 个可用书源", style = MaterialTheme.typography.labelSmall) },
+                                leadingIcon = {
+                                    Icon(LegadoIcons.SwapHoriz, contentDescription = null, modifier = Modifier.size(14.dp))
+                                }
                             )
                         }
                     }
                     Text(
-                        text = "作者: ${book.author.ifBlank { "未知" }}",
+                        text = "作者: ${selectedBook.author.ifBlank { "未知" }}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (!book.latestChapterTitle.isNullOrBlank()) {
+                    if (!selectedBook.latestChapterTitle.isNullOrBlank()) {
                         Text(
-                            text = "最新: ${book.latestChapterTitle}",
+                            text = "最新: ${selectedBook.latestChapterTitle}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -247,7 +265,7 @@ fun SearchResultCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
-                        onAddToShelf()
+                        onAddToShelf(selectedBook)
                         added = true
                     },
                     enabled = !added
@@ -257,12 +275,80 @@ fun SearchResultCard(
                     Text(if (added) "已在书架" else "加书架")
                 }
 
-                Button(onClick = onReadNow) {
+                Button(onClick = { onReadNow(selectedBook) }) {
                     Icon(LegadoIcons.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("阅读")
                 }
             }
         }
+    }
+
+    if (showSourcePicker) {
+        AlertDialog(
+            onDismissRequest = { showSourcePicker = false },
+            title = {
+                Text(
+                    text = "选择书源 (${selectedBook.name})",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(aggregatedBook.candidateSources) { candidate ->
+                        val isCurrent = candidate.bookUrl == selectedBook.bookUrl
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedBook = candidate
+                                    showSourcePicker = false
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = candidate.originName.ifBlank { "未知书源" },
+                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    if (!candidate.latestChapterTitle.isNullOrBlank()) {
+                                        Text(
+                                            text = "最新: ${candidate.latestChapterTitle}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                if (isCurrent) {
+                                    Icon(
+                                        LegadoIcons.Check,
+                                        contentDescription = "当前选中",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSourcePicker = false }) {
+                    Text("关闭")
+                }
+            }
+        )
     }
 }

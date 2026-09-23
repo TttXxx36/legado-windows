@@ -895,4 +895,74 @@ object LegadoIcons {
             close()
         }
     }
+
+    val SwapHoriz: ImageVector by lazy {
+        buildIcon("SwapHoriz") {
+            moveTo(6.99f, 11f)
+            lineTo(3f, 11f)
+            verticalLineTo(9f)
+            horizontalLineTo(6.99f)
+            verticalLineTo(6f)
+            lineTo(10f, 9.5f)
+            lineTo(6.99f, 13f)
+            verticalLineTo(11f)
+            close()
+            moveTo(21f, 14.5f)
+            lineTo(17.01f, 11f)
+            verticalLineTo(13f)
+            horizontalLineTo(13f)
+            verticalLineTo(15f)
+            horizontalLineTo(17.01f)
+            verticalLineTo(18f)
+            lineTo(21f, 14.5f)
+            close()
+        }
+    }
+
+    val Speed: ImageVector by lazy {
+        buildIcon("Speed") {
+            moveTo(12f, 4f)
+            curveTo(7.03f, 4f, 3f, 8.03f, 3f, 13f)
+            curveTo(3f, 15.76f, 4.22f, 18.23f, 6.16f, 19.9f)
+            lineTo(7.58f, 18.48f)
+            curveTo(6.01f, 17.12f, 5f, 15.18f, 5f, 13f)
+            curveTo(5f, 9.13f, 8.13f, 6f, 12f, 6f)
+            curveTo(15.87f, 6f, 19f, 9.13f, 19f, 13f)
+            curveTo(19f, 15.18f, 17.99f, 17.12f, 16.42f, 18.48f)
+            lineTo(17.84f, 19.9f)
+            curveTo(19.78f, 18.23f, 21f, 15.76f, 21f, 13f)
+            curveTo(21f, 8.03f, 16.97f, 4f, 12f, 4f)
+            close()
+            moveTo(10.59f, 15.41f)
+            curveTo(10.22f, 15.04f, 10f, 14.55f, 10f, 14f)
+            curveTo(10f, 12.9f, 10.9f, 12f, 12f, 12f)
+            curveTo(12.55f, 12f, 13.04f, 12.22f, 13.41f, 12.59f)
+            lineTo(16.5f, 9.5f)
+            lineTo(10.59f, 15.41f)
+            close()
+        }
+    }
+
+    val FilterList: ImageVector by lazy {
+        buildIcon("FilterList") {
+            moveTo(10f, 18f)
+            horizontalLineTo(14f)
+            verticalLineTo(16f)
+            horizontalLineTo(10f)
+            verticalLineTo(18f)
+            close()
+            moveTo(3f, 6f)
+            verticalLineTo(8f)
+            horizontalLineTo(21f)
+            verticalLineTo(6f)
+            horizontalLineTo(3f)
+            close()
+            moveTo(6f, 13f)
+            horizontalLineTo(18f)
+            verticalLineTo(11f)
+            horizontalLineTo(6f)
+            verticalLineTo(13f)
+            close()
+        }
+    }
 }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -30,8 +32,10 @@ import io.legado.desktop.data.model.BookSource
 import io.legado.desktop.data.model.ReplaceRule
 import io.legado.desktop.data.model.WebDavConfig
 import io.legado.desktop.engine.BookCacheEngine
-import io.legado.desktop.engine.CacheDownloadProgress
+import io.legado.desktop.engine.BookSourceDiagnosticEngine
 import io.legado.desktop.engine.BookSourceEngine
+import io.legado.desktop.engine.CacheDownloadProgress
+import io.legado.desktop.engine.DiagnosticStatus
 import io.legado.desktop.engine.hotkey.GlobalMediaHotkeyManager
 import io.legado.desktop.engine.local.LocalBookImporter
 import io.legado.desktop.engine.sync.WebDavSync
@@ -302,6 +306,21 @@ fun AppShell(
                                 scope.launch {
                                     AppDatabase.deleteBookSource(source.bookSourceUrl)
                                     sources.remove(source)
+                                }
+                            },
+                            onUpdateSource = { updatedSource ->
+                                scope.launch {
+                                    AppDatabase.insertOrUpdateBookSource(updatedSource)
+                                    val idx = sources.indexOfFirst { it.bookSourceUrl == updatedSource.bookSourceUrl }
+                                    if (idx >= 0) {
+                                        sources[idx] = updatedSource
+                                    }
+                                }
+                            },
+                            onRefreshSources = {
+                                scope.launch {
+                                    sources.clear()
+                                    sources.addAll(AppDatabase.getAllBookSources())
                                 }
                             }
                         )
@@ -886,7 +905,9 @@ fun DiscoverView() {
 fun SourcesView(
     sources: List<BookSource>,
     onAddSources: (List<BookSource>) -> Unit,
-    onDeleteSource: (BookSource) -> Unit
+    onDeleteSource: (BookSource) -> Unit,
+    onUpdateSource: (BookSource) -> Unit = {},
+    onRefreshSources: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     var showImportDialog by remember { mutableStateOf(false) }
@@ -905,6 +926,39 @@ fun SourcesView(
 
     var importError by remember { mutableStateOf<String?>(null) }
     var importSuccessMessage by remember { mutableStateOf<String?>(null) }
+
+    // Phase 14: Filter, Diagnostic & Batch Operation State
+    var keyword by remember { mutableStateOf("") }
+    var selectedGroup by remember { mutableStateOf("全部") }
+    var isTestingAll by remember { mutableStateOf(false) }
+    var testProgress by remember { mutableStateOf("") }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var showCleanConfirmDialog by remember { mutableStateOf(false) }
+
+    val allGroups = remember(sources) {
+        val groups = mutableSetOf<String>()
+        sources.forEach { s ->
+            val g = s.bookSourceGroup?.trim()
+            if (!g.isNullOrEmpty()) {
+                g.split("[,;，；]".toRegex()).map { it.trim() }.filter { it.isNotEmpty() }.forEach { groups.add(it) }
+            }
+        }
+        listOf("全部") + groups.sorted() + listOf("未分组")
+    }
+
+    val filteredSources = remember(sources, keyword, selectedGroup) {
+        sources.filter { s ->
+            val matchesKeyword = keyword.isBlank() ||
+                s.bookSourceName.contains(keyword, ignoreCase = true) ||
+                s.bookSourceUrl.contains(keyword, ignoreCase = true)
+            val matchesGroup = when (selectedGroup) {
+                "全部" -> true
+                "未分组" -> s.bookSourceGroup.isNullOrBlank()
+                else -> s.bookSourceGroup?.contains(selectedGroup) == true
+            }
+            matchesKeyword && matchesGroup
+        }
+    }
 
     fun getClipboardString(): String? {
         return try {
@@ -925,12 +979,12 @@ fun SourcesView(
         ) {
             Column {
                 Text(
-                    text = "书源管理",
+                    text = "书源管理中台",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "当前已导入 ${sources.size} 个 Legado 3.0 书源",
+                    text = "当前已导入 ${sources.size} 个 Legado 3.0 书源 (${sources.count { it.enabled }} 个已启用)",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -947,9 +1001,134 @@ fun SourcesView(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        if (sources.isEmpty()) {
+        // Search & Batch Action Toolbar
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = keyword,
+                onValueChange = { keyword = it },
+                placeholder = { Text("搜索书源名称或网址...") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+                trailingIcon = {
+                    if (keyword.isNotEmpty()) {
+                        IconButton(onClick = { keyword = "" }) {
+                            Icon(LegadoIcons.Clear, contentDescription = "清空")
+                        }
+                    }
+                }
+            )
+
+            // ⚡ 一键测速
+            OutlinedButton(
+                onClick = {
+                    if (isTestingAll) return@OutlinedButton
+                    isTestingAll = true
+                    testProgress = "0/${filteredSources.size}"
+                    scope.launch {
+                        BookSourceDiagnosticEngine.testAllSources(filteredSources) { done, total, _, _ ->
+                            testProgress = "$done/$total"
+                        }
+                        isTestingAll = false
+                        testProgress = ""
+                        statusMessage = "测速诊断完成！"
+                    }
+                },
+                enabled = !isTestingAll && filteredSources.isNotEmpty(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                if (isTestingAll) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text("测速中 ($testProgress)")
+                } else {
+                    Icon(LegadoIcons.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("一键测速")
+                }
+            }
+
+            // ⏸️ 禁用失效源
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        val count = BookSourceDiagnosticEngine.disableFailedSources(filteredSources)
+                        statusMessage = "已自动禁用 $count 个超时/失效书源"
+                        onRefreshSources()
+                    }
+                },
+                enabled = !isTestingAll && filteredSources.isNotEmpty(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(LegadoIcons.Pause, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("禁用失效源")
+            }
+
+            // 🗑️ 清理失效源
+            OutlinedButton(
+                onClick = { showCleanConfirmDialog = true },
+                enabled = !isTestingAll && filteredSources.isNotEmpty(),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) {
+                Icon(LegadoIcons.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("清理失效源")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Group Filter Chips Row
+        if (allGroups.size > 2) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                allGroups.forEach { grp ->
+                    FilterChip(
+                        selected = selectedGroup == grp,
+                        onClick = { selectedGroup = grp },
+                        label = { Text(grp) }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        // Notification Banner
+        if (statusMessage != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = statusMessage ?: "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    IconButton(onClick = { statusMessage = null }, modifier = Modifier.size(24.dp)) {
+                        Icon(LegadoIcons.Close, contentDescription = "关闭", modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+
+        if (filteredSources.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -963,7 +1142,7 @@ fun SourcesView(
                     )
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        text = "暂无书源，点击右上角“导入书源”通过网络链接、本地文件或剪贴板导入",
+                        text = if (sources.isEmpty()) "暂无书源，点击右上角“导入书源”导入" else "没有符合当前筛选条件的书源",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -971,10 +1150,15 @@ fun SourcesView(
             }
         } else {
             LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(sources) { source ->
+                items(filteredSources, key = { it.bookSourceUrl }) { source ->
+                    var itemStatus by remember(source.bookSourceUrl, isTestingAll) {
+                        mutableStateOf(BookSourceDiagnosticEngine.getStatus(source.bookSourceUrl))
+                    }
+                    var isItemTesting by remember { mutableStateOf(false) }
+
                     ElevatedCard(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
@@ -982,36 +1166,158 @@ fun SourcesView(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp),
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = source.bookSourceName,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = source.bookSourceName,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    if (!source.bookSourceGroup.isNullOrBlank()) {
+                                        AssistChip(
+                                            onClick = { selectedGroup = source.bookSourceGroup?.split("[,;，；]".toRegex())?.firstOrNull()?.trim() ?: "全部" },
+                                            label = { Text(source.bookSourceGroup ?: "", style = MaterialTheme.typography.labelSmall) }
+                                        )
+                                    }
+                                }
                                 Text(
                                     text = source.bookSourceUrl,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                if (!source.bookSourceGroup.isNullOrBlank()) {
-                                    Spacer(Modifier.height(4.dp))
-                                    AssistChip(
-                                        onClick = {},
-                                        label = { Text(source.bookSourceGroup ?: "") }
-                                    )
-                                }
                             }
 
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Diagnostic status badge
+                                when (val st = itemStatus) {
+                                    is DiagnosticStatus.Healthy -> {
+                                        Surface(
+                                            color = Color(0xFFE8F5E9),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "🟢 ${st.latencyMs}ms",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFF2E7D32),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    is DiagnosticStatus.Checking -> {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.5.dp)
+                                                Text("测速中", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                    }
+                                    is DiagnosticStatus.Timeout -> {
+                                        Surface(
+                                            color = Color(0xFFFFF9C4),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "🟡 超时",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFF57F17),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    is DiagnosticStatus.Error -> {
+                                        Surface(
+                                            color = Color(0xFFFFEBEE),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "🔴 失败",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFC62828),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    is DiagnosticStatus.Empty -> {
+                                        Surface(
+                                            color = Color(0xFFFFF3E0),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "⚠️ 无数据",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFE65100),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                    DiagnosticStatus.Untested -> {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "⚪ 未测速",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Enabled Switch
+                                Switch(
+                                    checked = source.enabled,
+                                    onCheckedChange = { chk ->
+                                        val updated = source.copy(enabled = chk)
+                                        onUpdateSource(updated)
+                                    }
+                                )
+
+                                // Single Test Button
+                                IconButton(
+                                    onClick = {
+                                        if (isItemTesting) return@IconButton
+                                        isItemTesting = true
+                                        itemStatus = DiagnosticStatus.Checking
+                                        scope.launch {
+                                            val res = BookSourceDiagnosticEngine.testSource(source)
+                                            itemStatus = res
+                                            isItemTesting = false
+                                        }
+                                    },
+                                    enabled = !isItemTesting
+                                ) {
+                                    Icon(LegadoIcons.Speed, contentDescription = "单源测速", modifier = Modifier.size(20.dp))
+                                }
+
+                                // Delete Button
                                 IconButton(onClick = { onDeleteSource(source) }) {
                                     Icon(
                                         LegadoIcons.Delete,
                                         contentDescription = "删除书源",
-                                        tint = MaterialTheme.colorScheme.error
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(20.dp)
                                     )
                                 }
                             }
@@ -1020,6 +1326,34 @@ fun SourcesView(
                 }
             }
         }
+    }
+
+    if (showCleanConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showCleanConfirmDialog = false },
+            title = { Text("清理失效书源") },
+            text = { Text("确定要彻底清理当前测速为超时或错误的书源吗？这将从本地数据库中移除这些失效书源。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCleanConfirmDialog = false
+                        scope.launch {
+                            val deleted = BookSourceDiagnosticEngine.deleteFailedSources(filteredSources)
+                            statusMessage = "已彻底清理 $deleted 个失效书源"
+                            onRefreshSources()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("确认清理")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCleanConfirmDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     if (showImportDialog) {

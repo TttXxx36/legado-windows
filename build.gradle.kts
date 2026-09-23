@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "io.legado.desktop"
-version = "1.8.1"
+version = "1.9.0"
 
 kotlin {
     jvm("jvm") {
@@ -62,7 +62,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "LegadoDesktop"
-            packageVersion = "1.8.1"
+            packageVersion = "1.9.0"
             description = "Legado with MD3 for Windows"
             copyright = "© 2026 Legado Community"
             vendor = "Legado Open Source"

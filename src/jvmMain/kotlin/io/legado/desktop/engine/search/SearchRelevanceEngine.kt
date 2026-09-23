@@ -2,6 +2,15 @@ package io.legado.desktop.engine.search
 
 import io.legado.desktop.data.model.Book
 
+data class AggregatedBook(
+    val primaryBook: Book,
+    val candidateSources: List<Book>
+) {
+    val title: String get() = primaryBook.name
+    val author: String get() = primaryBook.author
+    val sourceCount: Int get() = candidateSources.size
+}
+
 object SearchRelevanceEngine {
 
     /**
@@ -17,6 +26,30 @@ object SearchRelevanceEngine {
             compareByDescending<Book> { calculateScore(it, cleanKeyword) }
                 .thenByDescending { it.originName ?: "" }
         )
+    }
+
+    /**
+     * Intelligently aggregates books with the same title & author into a single AggregatedBook card,
+     * showing the best candidate source while preserving all alternate sources for seamless switching.
+     */
+    fun aggregateSearchResults(books: List<Book>, keyword: String): List<AggregatedBook> {
+        val sorted = sortSearchResults(books, keyword)
+        val cleanKeyword = normalize(keyword)
+
+        // Group books by normalized title and author
+        val grouped = linkedMapOf<String, MutableList<Book>>()
+        for (book in sorted) {
+            val key = "${normalize(book.name)}|${normalize(book.author ?: "")}"
+            grouped.getOrPut(key) { mutableListOf() }.add(book)
+        }
+
+        return grouped.values.map { candidates ->
+            val primary = candidates.maxByOrNull { calculateScore(it, cleanKeyword) } ?: candidates.first()
+            AggregatedBook(
+                primaryBook = primary,
+                candidateSources = candidates
+            )
+        }.sortedByDescending { calculateScore(it.primaryBook, cleanKeyword) }
     }
 
     fun calculateScore(book: Book, cleanKeyword: String): Double {

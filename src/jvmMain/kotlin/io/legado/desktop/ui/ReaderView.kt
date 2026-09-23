@@ -68,7 +68,11 @@ import io.legado.desktop.engine.rule.ReplaceRuleEngine
 import io.legado.desktop.engine.tts.TtsEngine
 import io.legado.desktop.ui.font.FontManager
 import io.legado.desktop.ui.theme.LegadoIcons
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import javax.swing.JFileChooser
@@ -280,6 +284,40 @@ fun ReaderView(
     // Mouse Wheel Damping Accumulator
     var wheelAccumulator by remember { mutableStateOf(0f) }
     var lastWheelTimestamp by remember { mutableStateOf(0L) }
+
+    // Phase 14: In-Reader Smart Source Switching (一键换源)
+    var showChangeSourceDialog by remember { mutableStateOf(false) }
+    var isSearchingCandidateSources by remember { mutableStateOf(false) }
+    val candidateSources = remember { mutableStateListOf<Book>() }
+    var isSwitchingSource by remember { mutableStateOf(false) }
+    var reloadChapterTrigger by remember { mutableStateOf(0) }
+
+    LaunchedEffect(showChangeSourceDialog) {
+        if (showChangeSourceDialog) {
+            isSearchingCandidateSources = true
+            candidateSources.clear()
+            val allSources = AppDatabase.getAllBookSources().filter { it.enabled && !it.searchUrl.isNullOrBlank() }
+            val deferred = allSources.map { source ->
+                async(Dispatchers.IO) {
+                    try {
+                        withTimeoutOrNull(5000L) {
+                            BookSourceEngine.search(source, book.name)
+                        } ?: emptyList()
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                }
+            }
+            val raw = deferred.awaitAll().flatten()
+            val cleanBookName = book.name.trim().replace("""[《》【】\[\]\s]""".toRegex(), "")
+            val matched = raw.filter {
+                it.name.trim().replace("""[《》【】\[\]\s]""".toRegex(), "").equals(cleanBookName, ignoreCase = true)
+            }
+            candidateSources.clear()
+            candidateSources.addAll(matched)
+            isSearchingCandidateSources = false
+        }
+    }
 
     LaunchedEffect(Unit) {
         val formatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
@@ -751,7 +789,7 @@ fun ReaderView(
     }
 
     // Load current chapter content and apply replace rules
-    LaunchedEffect(currentChapterIndex, chapters) {
+    LaunchedEffect(currentChapterIndex, chapters, reloadChapterTrigger) {
         if (chapters.isNotEmpty() && currentChapterIndex in chapters.indices) {
             val chapter = chapters[currentChapterIndex]
             isLoading = true
@@ -1819,6 +1857,17 @@ fun ReaderView(
                                 contentDescription = "批量离线缓存",
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
+                        }
+
+                        // In-Reader Smart Source Switching (换源)
+                        if (book.type != 3 && book.origin != "local") {
+                            IconButton(onClick = { showChangeSourceDialog = true }) {
+                                Icon(
+                                    LegadoIcons.SwapHoriz,
+                                    contentDescription = "一键换源",
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                         IconButton(onClick = { showSettingsDrawer = !showSettingsDrawer }) {
                             Icon(
@@ -3432,6 +3481,171 @@ fun ReaderView(
                 },
                 confirmButton = {
                     TextButton(onClick = { showBatchCacheDialog = false }) {
+                        Text("关闭")
+                    }
+                }
+            )
+        }
+
+        if (showChangeSourceDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    if (!isSwitchingSource) showChangeSourceDialog = false
+                },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(LegadoIcons.SwapHoriz, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text("换源 (${book.name})", fontWeight = FontWeight.Bold)
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "当前源站: ${book.originName.ifBlank { "默认书源" }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        if (isSearchingCandidateSources) {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                                    Text("正在全网并发检索匹配书源...", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        } else if (candidateSources.isEmpty()) {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("未检索到其他同名可用书源", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            Text(
+                                text = "共检索到 ${candidateSources.size} 个可用源站，点击无感切换并自动对齐章节：",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(candidateSources) { candidate ->
+                                    val isCurrent = candidate.origin == book.origin
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(enabled = !isSwitchingSource) {
+                                                if (isCurrent) {
+                                                    showChangeSourceDialog = false
+                                                    return@clickable
+                                                }
+                                                isSwitchingSource = true
+                                                scope.launch {
+                                                    val allSources = AppDatabase.getAllBookSources()
+                                                    val targetSource = allSources.firstOrNull { it.bookSourceUrl == candidate.origin }
+                                                    if (targetSource != null) {
+                                                        try {
+                                                            val newChapters = BookSourceEngine.getChapters(targetSource, candidate)
+                                                            if (newChapters.isNotEmpty()) {
+                                                                val oldChapterTitle = currentChapterTitle
+                                                                book.origin = candidate.origin
+                                                                book.originName = candidate.originName
+                                                                book.tocUrl = candidate.tocUrl
+                                                                book.latestChapterTitle = candidate.latestChapterTitle
+
+                                                                AppDatabase.insertOrUpdateBook(book)
+                                                                AppDatabase.saveChapters(book.bookUrl, newChapters)
+
+                                                                chapters = newChapters
+
+                                                                // Align current reading chapter
+                                                                val cleanOld = oldChapterTitle.trim().replace("""^第?[0-9零一二三四五六七八九十百千万]+[章节回集卷部篇]\s*""".toRegex(), "")
+                                                                val matchedIdx = newChapters.indexOfFirst { ch ->
+                                                                    val chClean = ch.title.trim().replace("""^第?[0-9零一二三四五六七八九十百千万]+[章节回集卷部篇]\s*""".toRegex(), "")
+                                                                    ch.title.trim() == oldChapterTitle.trim() ||
+                                                                    (cleanOld.isNotBlank() && (chClean.contains(cleanOld) || cleanOld.contains(chClean)))
+                                                                }
+                                                                val targetIdx = if (matchedIdx >= 0) matchedIdx else currentChapterIndex.coerceIn(0, newChapters.size - 1)
+                                                                currentChapterIndex = targetIdx
+                                                                reloadChapterTrigger++
+                                                            }
+                                                        } catch (e: Exception) {
+                                                            e.printStackTrace()
+                                                        }
+                                                    }
+                                                    isSwitchingSource = false
+                                                    showChangeSourceDialog = false
+                                                }
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = candidate.originName.ifBlank { "未知书源" },
+                                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                                                        style = MaterialTheme.typography.bodyMedium
+                                                    )
+                                                    if (isCurrent) {
+                                                        AssistChip(
+                                                            onClick = {},
+                                                            label = { Text("当前使用", style = MaterialTheme.typography.labelSmall) }
+                                                        )
+                                                    }
+                                                }
+                                                if (!candidate.latestChapterTitle.isNullOrBlank()) {
+                                                    Text(
+                                                        text = "最新: ${candidate.latestChapterTitle}",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+
+                                            if (isCurrent) {
+                                                Icon(
+                                                    LegadoIcons.Check,
+                                                    contentDescription = "当前使用中",
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "切换",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = !isSwitchingSource,
+                        onClick = { showChangeSourceDialog = false }
+                    ) {
                         Text("关闭")
                     }
                 }
