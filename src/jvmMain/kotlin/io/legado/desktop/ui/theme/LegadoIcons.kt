@@ -965,4 +965,37 @@ object LegadoIcons {
             close()
         }
     }
+
+    val AutoAwesome: ImageVector by lazy {
+        buildIcon("AutoAwesome") {
+            moveTo(19f, 9f)
+            lineTo(17.74f, 6.26f)
+            lineTo(15f, 5f)
+            lineTo(17.74f, 3.74f)
+            lineTo(19f, 1f)
+            lineTo(20.26f, 3.74f)
+            lineTo(23f, 5f)
+            lineTo(20.26f, 6.26f)
+            close()
+            moveTo(9f, 4f)
+            lineTo(6.5f, 9.5f)
+            lineTo(1f, 12f)
+            lineTo(6.5f, 14.5f)
+            lineTo(9f, 20f)
+            lineTo(11.5f, 14.5f)
+            lineTo(17f, 12f)
+            lineTo(11.5f, 9.5f)
+            close()
+            moveTo(19f, 15f)
+            lineTo(17.74f, 17.74f)
+            lineTo(15f, 19f)
+            lineTo(17.74f, 20.26f)
+            lineTo(19f, 23f)
+            lineTo(20.26f, 20.26f)
+            lineTo(23f, 19f)
+            lineTo(20.26f, 17.74f)
+            close()
+        }
+    }
 }
+

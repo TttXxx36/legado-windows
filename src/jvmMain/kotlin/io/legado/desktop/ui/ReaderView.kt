@@ -268,6 +268,8 @@ fun ReaderView(
     var horizontalPaddingDp by remember { mutableStateOf(32) }
     var showBatchCacheDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var showAiDrawer by remember { mutableStateOf(false) }
+    var aiQuerySelectionText by remember { mutableStateOf<String?>(null) }
 
     // Phase 13 Typography Aesthetics & Paper Texture States
     var enableKinsoku by remember { mutableStateOf(true) }
@@ -1701,6 +1703,14 @@ fun ReaderView(
                         activeSelectionText?.let { TtsEngine.speak(it) }
                         activeSelectionText = null
                     },
+                    onAiExplain = {
+                        val text = activeSelectionText
+                        if (!text.isNullOrBlank()) {
+                            aiQuerySelectionText = text
+                            showAiDrawer = true
+                        }
+                        activeSelectionText = null
+                    },
                     onDismiss = {
                         activeSelectionText = null
                     },
@@ -1864,6 +1874,16 @@ fun ReaderView(
                                 LegadoIcons.Download,
                                 contentDescription = "全书打包导出 (TXT/EPUB)",
                                 tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        IconButton(onClick = {
+                            showAiDrawer = !showAiDrawer
+                            aiQuerySelectionText = null
+                        }) {
+                            Icon(
+                                LegadoIcons.AutoAwesome,
+                                contentDescription = "AI 智能阅读助手",
+                                tint = if (showAiDrawer) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
                         }
 
@@ -3753,6 +3773,26 @@ fun ReaderView(
                 onDismiss = { activeLightboxImageUrl = null }
             )
         }
+
+        // AI Assistant Drawer Overlay
+        if (showAiDrawer) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .align(Alignment.CenterEnd)
+            ) {
+                AiAssistantDrawer(
+                    book = book,
+                    chapterTitle = chapters.getOrNull(currentChapterIndex)?.title ?: "当前章节",
+                    chapterContent = chapterContent,
+                    selectedText = aiQuerySelectionText,
+                    onClose = {
+                        showAiDrawer = false
+                        aiQuerySelectionText = null
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -3807,6 +3847,7 @@ fun FloatingAnnotationToolbar(
     onAddNote: () -> Unit,
     onCopy: () -> Unit,
     onSpeak: () -> Unit,
+    onAiExplain: () -> Unit = {},
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -3854,6 +3895,17 @@ fun FloatingAnnotationToolbar(
                 modifier = Modifier.height(28.dp)
             ) {
                 Text("〰️ 下划线", style = MaterialTheme.typography.labelSmall)
+            }
+
+            // AI Explain Button
+            FilledTonalButton(
+                onClick = onAiExplain,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Icon(LegadoIcons.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(3.dp))
+                Text("AI 解释", style = MaterialTheme.typography.labelSmall)
             }
 
             // Add Note
