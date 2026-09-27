@@ -650,6 +650,7 @@ fun BookshelfView(
         var batchCacheBook by remember { mutableStateOf<Book?>(null) }
         var batchCacheChapters by remember { mutableStateOf<List<BookChapter>>(emptyList()) }
         var isPreparingChapters by remember { mutableStateOf(false) }
+        var exportBook by remember { mutableStateOf<Book?>(null) }
 
         if (books.isEmpty()) {
             Box(
@@ -693,6 +694,9 @@ fun BookshelfView(
                                 batchCacheChapters = chs
                                 isPreparingChapters = false
                             }
+                        },
+                        onExport = {
+                            exportBook = book
                         },
                         onDelete = { onDeleteBook(book) }
                     )
@@ -784,6 +788,13 @@ fun BookshelfView(
                 }
             )
         }
+
+        if (exportBook != null) {
+            BookExportDialog(
+                book = exportBook!!,
+                onDismissRequest = { exportBook = null }
+            )
+        }
     }
 }
 
@@ -792,6 +803,7 @@ fun BookCard(
     book: Book,
     onOpen: () -> Unit,
     onCache: () -> Unit,
+    onExport: () -> Unit = {},
     onDelete: () -> Unit
 ) {
     ElevatedCard(
@@ -857,6 +869,14 @@ fun BookCard(
                             LegadoIcons.CloudDownload,
                             contentDescription = "批量缓存",
                             tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    IconButton(onClick = onExport, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            LegadoIcons.Download,
+                            contentDescription = "导出书籍 (TXT/EPUB)",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
                         )
                     }

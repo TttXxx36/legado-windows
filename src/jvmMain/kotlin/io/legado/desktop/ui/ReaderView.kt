@@ -267,6 +267,7 @@ fun ReaderView(
     var firstLineIndent by remember { mutableStateOf(true) }
     var horizontalPaddingDp by remember { mutableStateOf(32) }
     var showBatchCacheDialog by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
 
     // Phase 13 Typography Aesthetics & Paper Texture States
     var enableKinsoku by remember { mutableStateOf(true) }
@@ -1855,6 +1856,13 @@ fun ReaderView(
                             Icon(
                                 LegadoIcons.CloudDownload,
                                 contentDescription = "批量离线缓存",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        IconButton(onClick = { showExportDialog = true }) {
+                            Icon(
+                                LegadoIcons.Download,
+                                contentDescription = "全书打包导出 (TXT/EPUB)",
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -3484,6 +3492,13 @@ fun ReaderView(
                         Text("关闭")
                     }
                 }
+            )
+        }
+
+        if (showExportDialog) {
+            BookExportDialog(
+                book = book,
+                onDismissRequest = { showExportDialog = false }
             )
         }
 

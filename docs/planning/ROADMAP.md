@@ -264,13 +264,26 @@ flowchart TD
   - 新增 `Phase14FeatureTest` 专项测试套件（诊断状态机分类、批量禁用与清理、同名书聚合并发排序、扩展 JS 沙箱函数、请求头解析验证）；
   - 测试套件扩充至 **19 大测试套件、74 项自动化测试**，持续保持 100% 通过率。
 
-### 阶段十五：全书离线多格式打包导出引擎 (Phase 15 — v1.9.5)
-- **M15.1 单文件精排规范 TXT 导出**：
-  - 智能规整全书章节标题（统一中文编号规范），自动清除多余连续空行与首尾乱码，规范全角首行缩进；
-  - 支持原生文件保存对话框，全量 UTF-8 防乱码极速流式导出。
-- **M15.2 标准电子书 EPUB 打包导出 (`EpubExportEngine`)**：
-  - 严格按照 IDPF EPUB 2.0/3.0 OCF 标准打包生成 ZIP 容器：包含 `mimetype`、`META-INF/container.xml`、`content.opf`（Dublin Core 元数据、Manifest 清单、Spine 脊柱顺序）、`toc.ncx` 与 `nav.xhtml` 双层目录导航树；
-  - 嵌入封面图与格式化 XHTML 章节，导出文件可直接导入至掌阅、微信读书、Kindle 等专业阅读设备。
+### 阶段十五：全书离线多格式打包导出引擎 (Phase 15 — v1.9.5) — 已交付
+- **M15.1 单文件精排规范 TXT 流式导出 (`TxtExportEngine`)**：
+  - 智能规整全书章节标题（统一中文编号规范），自动清除多余连续空行，规范全角首行双空格缩进（`　　`）；
+  - 包含书名、作者、分类、来源、总章节数及简介的标准化题头；
+  - 规范 UTF-8 BOM 编码标识，保障 Windows 记事本、掌阅、Kindle 等各类电纸书墨水屏设备零乱码兼容；
+  - 增量流式写入（`BufferedWriter`），避免内存暴涨。
+- **M15.2 标准电子书 EPUB 双兼容打包导出 (`EpubExportEngine`)**：
+  - 严格按照 IDPF / W3C EPUB 2.0 / 3.0 OCF 标准打包生成 ZIP 容器；
+  - 首项必须为 `ZipEntry.STORED` 无压缩存储的 `mimetype`（`application/epub+zip`），确保 Apple Books、Calibre、微信读书等阅读器 100% 通过验证；
+  - 生成 `META-INF/container.xml`、`OEBPS/content.opf`（Dublin Core 元数据、Manifest 清单、Spine 脊柱顺序）；
+  - 双层目录树：传统 `OEBPS/toc.ncx` (EPUB 2) + 标准 HTML5 `OEBPS/nav.xhtml` (EPUB 3)；
+  - 内置优雅的中文排版样式表 `OEBPS/style.css` 与封面书籍信息页 `OEBPS/titlepage.xhtml`，自动进行严谨的 XML 字符实体转义。
+- **M15.3 统一导出调度器与导出弹窗交互 (`BookExportManager` & `BookExportDialog`)**：
+  - 支持「全书导出 (缺失章节自动拉取网络缓存)」与「仅导出已缓存章节」双重导出策略；
+  - 提供格式选择、排版选项定制、文件保存路径原生选择器、实时流式百分比进度条与当前章节指示；
+  - 导出完成后提供一键「打开文件」及「在文件夹中显示 (Explorer 定位)」；
+  - 在书架书籍卡片与阅读器顶部悬浮 HUD 中双重挂载导出入口。
+- **M15.4 自动化测试质量基准**：
+  - 新增 `Phase15FeatureTest` 自动化测试套件（TXT 排版压缩缩进测试、BOM 头部校验、EPUB OCF ZIP 容器规范校验、STORED mimetype 无压缩检测、EPUB 2/3 双目录验证）；
+  - 全套测试套件扩充至 **20 大测试套件、80 项自动化测试**，持续保持 100% 成功率。
 
 ### 阶段十六：AI 智能阅读辅助生态 (Phase 16 — v2.0.0)
 - **M16.1 通用大模型设置与协议适配 (`AiAssistantEngine`)**：
