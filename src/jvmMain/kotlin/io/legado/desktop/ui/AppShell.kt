@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -72,6 +73,25 @@ fun AppShell(
     var currentDestination by remember { mutableStateOf(NavDestination.BOOKSHELF) }
     var activeReadingBook by remember { mutableStateOf<Book?>(null) }
     val scope = rememberCoroutineScope()
+
+    // Phase 17: Global Command Palette State & Global Hotkey Dispatcher (Ctrl+K / Ctrl+P)
+    var showCommandPalette by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        val dispatcher = java.awt.KeyEventDispatcher { event ->
+            if (event.id == java.awt.event.KeyEvent.KEY_PRESSED) {
+                val isCtrl = event.isControlDown || event.isMetaDown
+                if (isCtrl && (event.keyCode == java.awt.event.KeyEvent.VK_K || event.keyCode == java.awt.event.KeyEvent.VK_P)) {
+                    showCommandPalette = true
+                    true
+                } else false
+            } else false
+        }
+        java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(dispatcher)
+        onDispose {
+            java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(dispatcher)
+        }
+    }
 
     val books = remember { mutableStateListOf<Book>() }
     val sources = remember { mutableStateListOf<BookSource>() }
@@ -351,6 +371,73 @@ fun AppShell(
             visible = isDraggingOver,
             modifier = Modifier.fillMaxSize()
         )
+
+        // Phase 17: Global Command Palette Dialog (Ctrl+K / Ctrl+P)
+        if (showCommandPalette) {
+            CommandPaletteDialog(
+                books = books,
+                isInReader = false,
+                onOpenBook = { book ->
+                    activeReadingBook = book
+                },
+                onTriggerAi = {
+                    currentDestination = NavDestination.SETTINGS
+                },
+                onTriggerTts = {
+                    val targetBook = books.filter { it.durChapterTime > 0 }.maxByOrNull { it.durChapterTime } ?: books.firstOrNull()
+                    if (targetBook != null) {
+                        activeReadingBook = targetBook
+                    }
+                },
+                onTriggerExport = {
+                    val targetBook = books.filter { it.durChapterTime > 0 }.maxByOrNull { it.durChapterTime } ?: books.firstOrNull()
+                    if (targetBook != null) {
+                        activeReadingBook = targetBook
+                    }
+                },
+                onTriggerChangeSource = {
+                    currentDestination = NavDestination.SOURCES
+                },
+                onNavigateToSearch = {
+                    currentDestination = NavDestination.DISCOVER
+                },
+                onNavigateToSources = {
+                    currentDestination = NavDestination.SOURCES
+                },
+                onImportLocalBook = {
+                    val dialog = FileDialog(null as Frame?, "选择本地电子书 (.txt, .epub)", FileDialog.LOAD)
+                    dialog.setFilenameFilter { _, name ->
+                        name.endsWith(".txt", ignoreCase = true) || name.endsWith(".epub", ignoreCase = true)
+                    }
+                    dialog.isVisible = true
+                    val file = dialog.file
+                    val dir = dialog.directory
+                    if (file != null && dir != null) {
+                        val selectedFile = File(dir, file)
+                        scope.launch {
+                            try {
+                                val imported = LocalBookImporter.importBook(selectedFile)
+                                if (!books.any { it.bookUrl == imported.bookUrl }) {
+                                    books.add(0, imported)
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+                },
+                onToggleFullscreen = {
+                    if (window is Frame) {
+                        window.extendedState = if (window.extendedState == Frame.MAXIMIZED_BOTH) Frame.NORMAL else Frame.MAXIMIZED_BOTH
+                    }
+                },
+                onToggleDualPage = {},
+                onOpenAiSettings = {
+                    currentDestination = NavDestination.SETTINGS
+                },
+                onDismissRequest = { showCommandPalette = false }
+            )
+        }
     }
 }
 }
@@ -646,6 +733,119 @@ fun BookshelfView(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        // Phase 17: 极速续读看板 (Quick Resume Hero Banner)
+        val lastReadBook = remember(books) {
+            books.filter { it.durChapterTime > 0 }.maxByOrNull { it.durChapterTime } ?: books.firstOrNull()
+        }
+        if (lastReadBook != null) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { onOpenBook(lastReadBook) },
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    LegadoIcons.Book,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        "⚡ 极速续读",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "《${lastReadBook.name}》",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "· ${lastReadBook.author.ifBlank { "未知作者" }}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Text(
+                                text = "当前读至：${lastReadBook.durChapterTitle?.ifBlank { "第 1 章" } ?: "第 1 章"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                        ) {
+                            Text(
+                                "Ctrl+K 指挥中心",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Button(
+                            onClick = { onOpenBook(lastReadBook) },
+                            shape = RoundedCornerShape(20.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Icon(LegadoIcons.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("立即续读", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
         var batchCacheBook by remember { mutableStateOf<Book?>(null) }
         var batchCacheChapters by remember { mutableStateOf<List<BookChapter>>(emptyList()) }

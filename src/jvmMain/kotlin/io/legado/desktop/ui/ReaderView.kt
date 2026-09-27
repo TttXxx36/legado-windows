@@ -66,6 +66,7 @@ import io.legado.desktop.engine.hotkey.GlobalMediaHotkeyManager
 import io.legado.desktop.engine.local.LocalBookImporter
 import io.legado.desktop.engine.rule.ReplaceRuleEngine
 import io.legado.desktop.engine.tts.TtsEngine
+import io.legado.desktop.engine.tts.EdgeTtsEngine
 import io.legado.desktop.ui.font.FontManager
 import io.legado.desktop.ui.theme.LegadoIcons
 import kotlinx.coroutines.Dispatchers
@@ -139,9 +140,10 @@ fun buildHighlightedText(
     activeMatchSnippet: String? = null,
     annotations: List<BookAnnotation> = emptyList(),
     isFirstPage: Boolean = false,
-    enableDropCaps: Boolean = false
+    enableDropCaps: Boolean = false,
+    activeTtsSentence: String? = null
 ): AnnotatedString {
-    if (query.isBlank() && annotations.isEmpty() && (!isFirstPage || !enableDropCaps)) {
+    if (query.isBlank() && annotations.isEmpty() && (!isFirstPage || !enableDropCaps) && activeTtsSentence.isNullOrBlank()) {
         return AnnotatedString(text)
     }
 
@@ -162,7 +164,29 @@ fun buildHighlightedText(
         }
     }
 
-    // Layer 1: User Annotations (Highlights & Underlines)
+    // Layer 1: TTS Active Sentence Highlight (Warm Amber Glow)
+    if (!activeTtsSentence.isNullOrBlank()) {
+        val cleanTts = activeTtsSentence.trim()
+        if (cleanTts.length >= 2) {
+            var searchIdx = 0
+            while (searchIdx < text.length) {
+                val found = text.indexOf(cleanTts, searchIdx)
+                if (found < 0) break
+                val foundEnd = found + cleanTts.length
+                builder.addStyle(
+                    SpanStyle(
+                        background = Color(0x4DFF9800),
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    found,
+                    foundEnd
+                )
+                searchIdx = foundEnd
+            }
+        }
+    }
+
+    // Layer 2: User Annotations (Highlights & Underlines)
     for (anno in annotations) {
         if (anno.selectedText.isBlank()) continue
         var searchIdx = 0
@@ -181,7 +205,7 @@ fun buildHighlightedText(
         }
     }
 
-    // Layer 2: Search Query Highlight (Top Layer, High Contrast)
+    // Layer 3: Search Query Highlight (Top Layer, High Contrast)
     if (query.isNotBlank()) {
         var cursor = 0
         while (cursor < text.length) {
@@ -665,10 +689,13 @@ fun ReaderView(
         }
     }
 
-    // TTS State
-    var isTtsActive by remember { mutableStateOf(false) }
-    var isTtsPlaying by remember { mutableStateOf(false) }
-    var ttsRate by remember { mutableStateOf(0) }
+    // Phase 17: Edge-TTS & Global Command Palette States
+    val ttsPlayState by EdgeTtsEngine.playState.collectAsState()
+    var showTtsOverlay by remember { mutableStateOf(false) }
+    var showCommandPalette by remember { mutableStateOf(false) }
+    val activeTtsSentence = remember(showTtsOverlay, ttsPlayState.isPlaying, ttsPlayState.currentSentenceText) {
+        if (showTtsOverlay || ttsPlayState.isPlaying) ttsPlayState.currentSentenceText else null
+    }
 
     // Load chapters, bookmarks & preferences
     LaunchedEffect(book.bookUrl) {
@@ -858,9 +885,13 @@ fun ReaderView(
                 currentPageIndex = 0
             }
 
-            // If TTS was speaking, restart with new chapter
-            if (isTtsActive && isTtsPlaying) {
-                TtsEngine.speak(chapterContent, ttsRate)
+            // If Edge-TTS was speaking, restart with new chapter
+            if (showTtsOverlay && ttsPlayState.isPlaying) {
+                EdgeTtsEngine.startChapter(
+                    chapterTitle = chapter.title,
+                    content = chapterContent,
+                    startIndex = 0
+                )
             }
 
             // Update reading progress in database
@@ -903,38 +934,66 @@ fun ReaderView(
         }
     }
 
-    DisposableEffect(currentChapterIndex, chapters, isTtsActive, isTtsPlaying, chapterContent, ttsRate) {
+    // Auto page turn synchronized with Edge-TTS active sentence
+    LaunchedEffect(ttsPlayState.currentSentenceText) {
+        val s = ttsPlayState.currentSentenceText.trim()
+        if (ttsPlayState.isPlaying && s.isNotBlank() && pagedChapter.pages.isNotEmpty()) {
+            val pIdx = pagedChapter.pages.indexOfFirst { it.contains(s) }
+            if (pIdx >= 0) {
+                currentPageIndex = if (isDualPage) (pIdx / 2) * 2 else pIdx
+            }
+        }
+    }
+
+    // Auto next chapter when Edge-TTS finishes current chapter
+    LaunchedEffect(currentChapterIndex, chapters.size) {
+        EdgeTtsEngine.onChapterFinished = {
+            if (currentChapterIndex < chapters.size - 1) {
+                scope.launch {
+                    currentChapterIndex++
+                }
+            }
+        }
+    }
+
+    DisposableEffect(currentChapterIndex, chapters, showTtsOverlay, ttsPlayState.isPlaying, chapterContent) {
         val prevPlayPause = GlobalMediaHotkeyManager.onPlayPause
         val prevNext = GlobalMediaHotkeyManager.onNext
         val prevPrev = GlobalMediaHotkeyManager.onPrev
 
         GlobalMediaHotkeyManager.onPlayPause = {
-            if (isTtsActive) {
-                if (isTtsPlaying) {
-                    TtsEngine.pause()
-                    isTtsPlaying = false
+            if (showTtsOverlay) {
+                if (ttsPlayState.isPlaying) {
+                    EdgeTtsEngine.pause()
                 } else {
-                    TtsEngine.resume()
-                    isTtsPlaying = true
+                    EdgeTtsEngine.resume()
                 }
             } else {
-                isTtsActive = true
-                isTtsPlaying = true
-                TtsEngine.speak(chapterContent, ttsRate)
+                showTtsOverlay = true
+                EdgeTtsEngine.startChapter(
+                    chapterTitle = chapters.getOrNull(currentChapterIndex)?.title ?: "当前章节",
+                    content = chapterContent,
+                    startIndex = 0
+                )
             }
         }
         GlobalMediaHotkeyManager.onNext = {
-            if (currentChapterIndex < chapters.size - 1) {
+            if (showTtsOverlay && ttsPlayState.isPlaying) {
+                EdgeTtsEngine.nextSentence()
+            } else if (currentChapterIndex < chapters.size - 1) {
                 currentChapterIndex++
             }
         }
         GlobalMediaHotkeyManager.onPrev = {
-            if (currentChapterIndex > 0) {
+            if (showTtsOverlay && ttsPlayState.isPlaying) {
+                EdgeTtsEngine.previousSentence()
+            } else if (currentChapterIndex > 0) {
                 currentChapterIndex--
             }
         }
 
         onDispose {
+            EdgeTtsEngine.stop()
             TtsEngine.stop()
             GlobalMediaHotkeyManager.onPlayPause = prevPlayPause
             GlobalMediaHotkeyManager.onNext = prevNext
@@ -955,6 +1014,7 @@ fun ReaderView(
     val isCurrentChapterBookmarked = bookBookmarks.any { it.chapterIndex == currentChapterIndex }
 
     fun handleClose() {
+        EdgeTtsEngine.stop()
         TtsEngine.stop()
         onClose()
     }
@@ -988,6 +1048,10 @@ fun ReaderView(
                         when (event.key) {
                             Key.F -> {
                                 showSearch = !showSearch
+                                true
+                            }
+                            Key.K, Key.P -> {
+                                showCommandPalette = true
                                 true
                             }
                             else -> false
@@ -1229,7 +1293,8 @@ fun ReaderView(
                                             searchMatches.getOrNull(currentSearchMatchIndex)?.snippet,
                                             chapterAnnotations,
                                             isFirstPage = (spread.leftPageIndex == 0),
-                                            enableDropCaps = enableDropCaps
+                                            enableDropCaps = enableDropCaps,
+                                            activeTtsSentence = activeTtsSentence
                                         ),
                                         fontSize = fontSize.sp,
                                         lineHeight = (fontSize * lineSpacingMultiplier).sp,
@@ -1340,7 +1405,8 @@ fun ReaderView(
                                                 searchMatches.getOrNull(currentSearchMatchIndex)?.snippet,
                                                 chapterAnnotations,
                                                 isFirstPage = (spread.rightPageIndex == 0),
-                                                enableDropCaps = enableDropCaps
+                                                enableDropCaps = enableDropCaps,
+                                                activeTtsSentence = activeTtsSentence
                                             ),
                                             fontSize = fontSize.sp,
                                             lineHeight = (fontSize * lineSpacingMultiplier).sp,
@@ -1503,7 +1569,8 @@ fun ReaderView(
                                         searchMatches.getOrNull(currentSearchMatchIndex)?.snippet,
                                         chapterAnnotations,
                                         isFirstPage = (pageIdx == 0),
-                                        enableDropCaps = enableDropCaps
+                                        enableDropCaps = enableDropCaps,
+                                        activeTtsSentence = activeTtsSentence
                                     ),
                                     fontSize = fontSize.sp,
                                     lineHeight = (fontSize * lineSpacingMultiplier).sp,
@@ -1625,7 +1692,8 @@ fun ReaderView(
                                             searchMatches.getOrNull(currentSearchMatchIndex)?.snippet,
                                             chapterAnnotations,
                                             isFirstPage = (pIndex == 0),
-                                            enableDropCaps = enableDropCaps
+                                            enableDropCaps = enableDropCaps,
+                                            activeTtsSentence = activeTtsSentence
                                         ),
                                         fontSize = fontSize.sp,
                                         lineHeight = (fontSize * lineSpacingMultiplier).sp,
@@ -1799,23 +1867,26 @@ fun ReaderView(
                             )
                         }
 
-                        // TTS Speech Toggle Button
+                        // Edge-TTS Speech Toggle Button
                         IconButton(
                             onClick = {
-                                isTtsActive = !isTtsActive
-                                if (isTtsActive) {
-                                    isTtsPlaying = true
-                                    TtsEngine.speak(chapterContent, ttsRate)
+                                if (!showTtsOverlay) {
+                                    showTtsOverlay = true
+                                    EdgeTtsEngine.startChapter(
+                                        chapterTitle = chapters.getOrNull(currentChapterIndex)?.title ?: "当前章节",
+                                        content = chapterContent,
+                                        startIndex = 0
+                                    )
                                 } else {
-                                    isTtsPlaying = false
-                                    TtsEngine.stop()
+                                    showTtsOverlay = false
+                                    EdgeTtsEngine.stop()
                                 }
                             }
                         ) {
                             Icon(
-                                if (isTtsActive) LegadoIcons.VolumeUp else LegadoIcons.Headphones,
-                                contentDescription = "语音朗读",
-                                tint = if (isTtsActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                if (showTtsOverlay || ttsPlayState.isPlaying) LegadoIcons.VolumeUp else LegadoIcons.Headphones,
+                                contentDescription = "微软 Edge-TTS 拟人听书",
+                                tint = if (showTtsOverlay || ttsPlayState.isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
                         }
 
@@ -1981,87 +2052,21 @@ fun ReaderView(
             }
         }
 
-        // TTS Floating Controller Bar
-        AnimatedVisibility(
-            visible = isTtsActive,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 90.dp)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                shadowElevation = 8.dp
+        // Phase 17: Edge-TTS Floating Controller Capsule Overlay
+        if (showTtsOverlay || ttsPlayState.isPlaying) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = if (showHud) 90.dp else 24.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Windows TTS 朗读中",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    IconButton(
-                        onClick = {
-                            if (isTtsPlaying) {
-                                TtsEngine.stop()
-                                isTtsPlaying = false
-                            } else {
-                                TtsEngine.speak(chapterContent, ttsRate)
-                                isTtsPlaying = true
-                            }
-                        }
-                    ) {
-                        Icon(
-                            if (isTtsPlaying) LegadoIcons.Pause else LegadoIcons.PlayArrow,
-                            contentDescription = "播放/暂停"
-                        )
+                EdgeTtsPlayerOverlay(
+                    onDismiss = {
+                        showTtsOverlay = false
+                        EdgeTtsEngine.stop()
                     }
-
-                    // Rate Controls
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilterChip(
-                            selected = ttsRate == -2,
-                            onClick = {
-                                ttsRate = -2
-                                if (isTtsPlaying) TtsEngine.speak(chapterContent, ttsRate)
-                            },
-                            label = { Text("0.8x") }
-                        )
-                        FilterChip(
-                            selected = ttsRate == 0,
-                            onClick = {
-                                ttsRate = 0
-                                if (isTtsPlaying) TtsEngine.speak(chapterContent, ttsRate)
-                            },
-                            label = { Text("1.0x") }
-                        )
-                        FilterChip(
-                            selected = ttsRate == 2,
-                            onClick = {
-                                ttsRate = 2
-                                if (isTtsPlaying) TtsEngine.speak(chapterContent, ttsRate)
-                            },
-                            label = { Text("1.2x") }
-                        )
-                    }
-
-                    IconButton(
-                        onClick = {
-                            isTtsActive = false
-                            isTtsPlaying = false
-                            TtsEngine.stop()
-                        }
-                    ) {
-                        Icon(LegadoIcons.Close, contentDescription = "关闭朗读")
-                    }
-                }
+                )
             }
         }
 
@@ -3792,6 +3797,43 @@ fun ReaderView(
                     }
                 )
             }
+        }
+
+        // Phase 17: Global Command Palette Overlay (Ctrl+K / Ctrl+P)
+        if (showCommandPalette) {
+            CommandPaletteDialog(
+                books = listOf(book),
+                isInReader = true,
+                onOpenBook = { /* already in reader */ },
+                onTriggerAi = {
+                    showAiDrawer = true
+                    aiQuerySelectionText = null
+                },
+                onTriggerTts = {
+                    if (!showTtsOverlay) {
+                        showTtsOverlay = true
+                        EdgeTtsEngine.startChapter(
+                            chapterTitle = chapters.getOrNull(currentChapterIndex)?.title ?: "当前章节",
+                            content = chapterContent,
+                            startIndex = 0
+                        )
+                    } else {
+                        if (ttsPlayState.isPlaying) EdgeTtsEngine.pause() else EdgeTtsEngine.resume()
+                    }
+                },
+                onTriggerExport = { showExportDialog = true },
+                onTriggerChangeSource = { showChangeSourceDialog = true },
+                onNavigateToSearch = { showSearch = true },
+                onNavigateToSources = { /* in reader */ },
+                onImportLocalBook = { /* in reader */ },
+                onToggleFullscreen = { isImmersive = !isImmersive },
+                onToggleDualPage = {
+                    isDualPage = !isDualPage
+                    pageTurnMode = if (isDualPage) PageTurnMode.DUAL_PAGE else PageTurnMode.SLIDE_PAGING
+                },
+                onOpenAiSettings = { showAiDrawer = true },
+                onDismissRequest = { showCommandPalette = false }
+            )
         }
     }
 }

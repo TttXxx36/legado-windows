@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "io.legado.desktop"
-version = "2.0.0"
+version = "2.1.0"
 
 kotlin {
     jvm("jvm") {
@@ -42,6 +42,9 @@ kotlin {
                 implementation(files("libs/sqlite-jdbc-3.46.1.0-win64.jar"))
                 implementation("org.slf4j:slf4j-api:1.7.36")
 
+                // Audio playback for Edge-TTS neural speech MP3 stream
+                implementation("javazoom:jlayer:1.0.1")
+
                 // System directories (Windows AppData)
                 implementation("dev.dirs:directories:26")
             }
@@ -62,7 +65,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "LegadoDesktop"
-            packageVersion = "2.0.0"
+            packageVersion = "2.1.0"
             description = "Legado with MD3 for Windows"
             copyright = "© 2026 Legado Community"
             vendor = "Legado Open Source"
