@@ -314,39 +314,10 @@ fun ReaderView(
     var wheelAccumulator by remember { mutableStateOf(0f) }
     var lastWheelTimestamp by remember { mutableStateOf(0L) }
 
-    // Phase 14: In-Reader Smart Source Switching (一键换源)
-    var showChangeSourceDialog by remember { mutableStateOf(false) }
-    var isSearchingCandidateSources by remember { mutableStateOf(false) }
-    val candidateSources = remember { mutableStateListOf<Book>() }
-    var isSwitchingSource by remember { mutableStateOf(false) }
+    // Phase 20: In-Reader Smart Source Switching & Alignment System
+    var showChangeSourceDrawer by remember { mutableStateOf(false) }
+    var previousSourceRecord by remember { mutableStateOf<SourceHistoryRecord?>(null) }
     var reloadChapterTrigger by remember { mutableStateOf(0) }
-
-    LaunchedEffect(showChangeSourceDialog) {
-        if (showChangeSourceDialog) {
-            isSearchingCandidateSources = true
-            candidateSources.clear()
-            val allSources = AppDatabase.getAllBookSources().filter { it.enabled && !it.searchUrl.isNullOrBlank() }
-            val deferred = allSources.map { source ->
-                async(Dispatchers.IO) {
-                    try {
-                        withTimeoutOrNull(5000L) {
-                            BookSourceEngine.search(source, book.name)
-                        } ?: emptyList()
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                }
-            }
-            val raw = deferred.awaitAll().flatten()
-            val cleanBookName = book.name.trim().replace("""[《》【】\[\]\s]""".toRegex(), "")
-            val matched = raw.filter {
-                it.name.trim().replace("""[《》【】\[\]\s]""".toRegex(), "").equals(cleanBookName, ignoreCase = true)
-            }
-            candidateSources.clear()
-            candidateSources.addAll(matched)
-            isSearchingCandidateSources = false
-        }
-    }
 
     LaunchedEffect(Unit) {
         val formatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
@@ -1065,7 +1036,15 @@ fun ReaderView(
             .focusable()
             .onKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
-                    if (event.isCtrlPressed || event.isMetaPressed) {
+                    if (event.isAltPressed && event.key == Key.S) {
+                        if (book.type != 3 && book.origin != "local") {
+                            showChangeSourceDrawer = !showChangeSourceDrawer
+                            true
+                        } else false
+                    } else if (event.key == Key.Escape && showChangeSourceDrawer) {
+                        showChangeSourceDrawer = false
+                        true
+                    } else if (event.isCtrlPressed || event.isMetaPressed) {
                         when (event.key) {
                             Key.F -> {
                                 showSearch = !showSearch
@@ -1633,12 +1612,29 @@ fun ReaderView(
                                 color = themeText.copy(alpha = 0.45f),
                                 fontFamily = activeFontFamily
                             )
-                            Text(
-                                text = "本章共 ${pagedChapter.totalCharCount} 字",
-                                fontSize = 12.sp,
-                                color = themeText.copy(alpha = 0.45f),
-                                fontFamily = activeFontFamily
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (book.type != 3 && book.origin != "local") {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = themeText.copy(alpha = 0.08f),
+                                        modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { showChangeSourceDrawer = true }
+                                    ) {
+                                        Text(
+                                            text = "源: ${book.originName.ifBlank { "在线书源" }} ⇄",
+                                            fontSize = 11.sp,
+                                            color = themeText.copy(alpha = 0.7f),
+                                            fontFamily = activeFontFamily,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = "本章共 ${pagedChapter.totalCharCount} 字",
+                                    fontSize = 12.sp,
+                                    color = themeText.copy(alpha = 0.45f),
+                                    fontFamily = activeFontFamily
+                                )
+                            }
                         }
                     }
                 }
@@ -1753,12 +1749,29 @@ fun ReaderView(
                                     color = themeText.copy(alpha = 0.45f),
                                     fontFamily = activeFontFamily
                                 )
-                                Text(
-                                    text = "本章共 ${chapterContent.length} 字",
-                                    fontSize = 12.sp,
-                                    color = themeText.copy(alpha = 0.45f),
-                                    fontFamily = activeFontFamily
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (book.type != 3 && book.origin != "local") {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = themeText.copy(alpha = 0.08f),
+                                            modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { showChangeSourceDrawer = true }
+                                        ) {
+                                            Text(
+                                                text = "源: ${book.originName.ifBlank { "在线书源" }} ⇄",
+                                                fontSize = 11.sp,
+                                                color = themeText.copy(alpha = 0.7f),
+                                                fontFamily = activeFontFamily,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = "本章共 ${chapterContent.length} 字",
+                                        fontSize = 12.sp,
+                                        color = themeText.copy(alpha = 0.45f),
+                                        fontFamily = activeFontFamily
+                                    )
+                                }
                             }
                         }
 
@@ -1995,11 +2008,11 @@ fun ReaderView(
 
                         // In-Reader Smart Source Switching (换源)
                         if (book.type != 3 && book.origin != "local") {
-                            IconButton(onClick = { showChangeSourceDialog = true }) {
+                            IconButton(onClick = { showChangeSourceDrawer = true }) {
                                 Icon(
                                     LegadoIcons.SwapHoriz,
-                                    contentDescription = "一键换源",
-                                    tint = MaterialTheme.colorScheme.onSurface
+                                    contentDescription = "智能换源 (Alt+S)",
+                                    tint = if (showChangeSourceDrawer) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -3604,166 +3617,68 @@ fun ReaderView(
             )
         }
 
-        if (showChangeSourceDialog) {
-            AlertDialog(
-                onDismissRequest = {
-                    if (!isSwitchingSource) showChangeSourceDialog = false
-                },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(LegadoIcons.SwapHoriz, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text("换源 (${book.name})", fontWeight = FontWeight.Bold)
-                    }
-                },
-                text = {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            text = "当前源站: ${book.originName.ifBlank { "默认书源" }}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        if (isSearchingCandidateSources) {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(32.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                                    Text("正在全网并发检索匹配书源...", style = MaterialTheme.typography.bodySmall)
+        // Phase 20: In-Reader Smart Source Switching Drawer
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            ChangeSourceDrawer(
+                visible = showChangeSourceDrawer,
+                book = book,
+                currentChapterTitle = currentChapterTitle,
+                currentChapterIndex = currentChapterIndex,
+                previousSource = previousSourceRecord,
+                onClose = { showChangeSourceDrawer = false },
+                onRollback = {
+                    val prev = previousSourceRecord ?: return@ChangeSourceDrawer
+                    scope.launch {
+                        val allSources = AppDatabase.getAllBookSources()
+                        val prevSource = allSources.firstOrNull { it.bookSourceUrl == prev.origin }
+                        if (prevSource != null) {
+                            try {
+                                val prevChapters = BookSourceEngine.getChapters(prevSource, book.copy(origin = prev.origin, tocUrl = prev.tocUrl))
+                                if (prevChapters.isNotEmpty()) {
+                                    book.origin = prev.origin
+                                    book.originName = prev.originName
+                                    book.tocUrl = prev.tocUrl
+                                    AppDatabase.insertOrUpdateBook(book)
+                                    AppDatabase.saveChapters(book.bookUrl, prevChapters)
+                                    chapters = prevChapters
+                                    currentChapterIndex = prev.chapterIndex.coerceIn(0, prevChapters.size - 1)
+                                    reloadChapterTrigger++
+                                    previousSourceRecord = null
+                                    showChangeSourceDrawer = false
                                 }
-                            }
-                        } else if (candidateSources.isEmpty()) {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(32.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("未检索到其他同名可用书源", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        } else {
-                            Text(
-                                text = "共检索到 ${candidateSources.size} 个可用源站，点击无感切换并自动对齐章节：",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            LazyColumn(
-                                modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                items(candidateSources) { candidate ->
-                                    val isCurrent = candidate.origin == book.origin
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable(enabled = !isSwitchingSource) {
-                                                if (isCurrent) {
-                                                    showChangeSourceDialog = false
-                                                    return@clickable
-                                                }
-                                                isSwitchingSource = true
-                                                scope.launch {
-                                                    val allSources = AppDatabase.getAllBookSources()
-                                                    val targetSource = allSources.firstOrNull { it.bookSourceUrl == candidate.origin }
-                                                    if (targetSource != null) {
-                                                        try {
-                                                            val newChapters = BookSourceEngine.getChapters(targetSource, candidate)
-                                                            if (newChapters.isNotEmpty()) {
-                                                                val oldChapterTitle = currentChapterTitle
-                                                                book.origin = candidate.origin
-                                                                book.originName = candidate.originName
-                                                                book.tocUrl = candidate.tocUrl
-                                                                book.latestChapterTitle = candidate.latestChapterTitle
-
-                                                                AppDatabase.insertOrUpdateBook(book)
-                                                                AppDatabase.saveChapters(book.bookUrl, newChapters)
-
-                                                                chapters = newChapters
-
-                                                                // Align current reading chapter
-                                                                val cleanOld = oldChapterTitle.trim().replace("""^第?[0-9零一二三四五六七八九十百千万]+[章节回集卷部篇]\s*""".toRegex(), "")
-                                                                val matchedIdx = newChapters.indexOfFirst { ch ->
-                                                                    val chClean = ch.title.trim().replace("""^第?[0-9零一二三四五六七八九十百千万]+[章节回集卷部篇]\s*""".toRegex(), "")
-                                                                    ch.title.trim() == oldChapterTitle.trim() ||
-                                                                    (cleanOld.isNotBlank() && (chClean.contains(cleanOld) || cleanOld.contains(chClean)))
-                                                                }
-                                                                val targetIdx = if (matchedIdx >= 0) matchedIdx else currentChapterIndex.coerceIn(0, newChapters.size - 1)
-                                                                currentChapterIndex = targetIdx
-                                                                reloadChapterTrigger++
-                                                            }
-                                                        } catch (e: Exception) {
-                                                            e.printStackTrace()
-                                                        }
-                                                    }
-                                                    isSwitchingSource = false
-                                                    showChangeSourceDialog = false
-                                                }
-                                            }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(12.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Row(
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text(
-                                                        text = candidate.originName.ifBlank { "未知书源" },
-                                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
-                                                        style = MaterialTheme.typography.bodyMedium
-                                                    )
-                                                    if (isCurrent) {
-                                                        AssistChip(
-                                                            onClick = {},
-                                                            label = { Text("当前使用", style = MaterialTheme.typography.labelSmall) }
-                                                        )
-                                                    }
-                                                }
-                                                if (!candidate.latestChapterTitle.isNullOrBlank()) {
-                                                    Text(
-                                                        text = "最新: ${candidate.latestChapterTitle}",
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                }
-                                            }
-
-                                            if (isCurrent) {
-                                                Icon(
-                                                    LegadoIcons.Check,
-                                                    contentDescription = "当前使用中",
-                                                    tint = MaterialTheme.colorScheme.primary
-                                                )
-                                            } else {
-                                                Text(
-                                                    text = "切换",
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            } catch (_: Exception) {}
                         }
                     }
                 },
-                confirmButton = {
-                    TextButton(
-                        enabled = !isSwitchingSource,
-                        onClick = { showChangeSourceDialog = false }
-                    ) {
-                        Text("关闭")
+                onSelectSource = { targetBook, targetSource, alignedChapterIndex, newChapters ->
+                    if (targetBook.origin == book.origin) {
+                        showChangeSourceDrawer = false
+                        return@ChangeSourceDrawer
+                    }
+                    previousSourceRecord = SourceHistoryRecord(
+                        origin = book.origin,
+                        originName = book.originName,
+                        tocUrl = book.tocUrl,
+                        chapterIndex = currentChapterIndex,
+                        chapterTitle = currentChapterTitle
+                    )
+                    book.origin = targetBook.origin
+                    book.originName = targetBook.originName
+                    book.tocUrl = targetBook.tocUrl
+                    book.latestChapterTitle = targetBook.latestChapterTitle
+
+                    scope.launch {
+                        AppDatabase.insertOrUpdateBook(book)
+                        if (newChapters.isNotEmpty()) {
+                            AppDatabase.saveChapters(book.bookUrl, newChapters)
+                            chapters = newChapters
+                            currentChapterIndex = alignedChapterIndex.coerceIn(0, (newChapters.size - 1).coerceAtLeast(0))
+                        }
+                        reloadChapterTrigger++
+                        showChangeSourceDrawer = false
                     }
                 }
             )
@@ -3899,7 +3814,7 @@ fun ReaderView(
                     }
                 },
                 onTriggerExport = { showExportDialog = true },
-                onTriggerChangeSource = { showChangeSourceDialog = true },
+                onTriggerChangeSource = { showChangeSourceDrawer = true },
                 onNavigateToSearch = { showSearch = true },
                 onNavigateToSources = { /* in reader */ },
                 onImportLocalBook = { /* in reader */ },
