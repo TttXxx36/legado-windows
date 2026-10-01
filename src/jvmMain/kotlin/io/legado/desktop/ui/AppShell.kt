@@ -47,11 +47,13 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.StringSelection
 import java.io.File
 import java.net.URI
 import javax.swing.JFileChooser
 import javax.swing.filechooser.FileNameExtensionFilter
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
 
 enum class NavDestination(
     val title: String,
@@ -61,6 +63,7 @@ enum class NavDestination(
     BOOKSHELF("书架", LegadoIcons.Book, LegadoIcons.Book),
     DISCOVER("发现", LegadoIcons.Explore, LegadoIcons.Explore),
     SOURCES("书源", LegadoIcons.LibraryBooks, LegadoIcons.LibraryBooks),
+    STATS("统计", LegadoIcons.BarChart, LegadoIcons.BarChart),
     SETTINGS("设置", LegadoIcons.Settings, LegadoIcons.Settings)
 }
 
@@ -344,6 +347,14 @@ fun AppShell(
                                 }
                             }
                         )
+                        NavDestination.STATS -> AnalyticsView(
+                            onOpenBook = { targetUrl ->
+                                val book = books.find { it.bookUrl == targetUrl }
+                                if (book != null) {
+                                    activeReadingBook = book
+                                }
+                            }
+                        )
                         NavDestination.SETTINGS -> SettingsView(darkTheme, onToggleTheme)
                     }
                 }
@@ -434,6 +445,9 @@ fun AppShell(
                 onToggleDualPage = {},
                 onOpenAiSettings = {
                     currentDestination = NavDestination.SETTINGS
+                },
+                onNavigateToStats = {
+                    currentDestination = NavDestination.STATS
                 },
                 onDismissRequest = { showCommandPalette = false }
             )
@@ -1154,6 +1168,8 @@ fun SourcesView(
     var testProgress by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var showCleanConfirmDialog by remember { mutableStateOf(false) }
+    var sortByLatency by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
 
     val allGroups = remember(sources) {
         val groups = mutableSetOf<String>()
@@ -1177,6 +1193,19 @@ fun SourcesView(
                 else -> s.bookSourceGroup?.contains(selectedGroup) == true
             }
             matchesKeyword && matchesGroup
+        }
+    }
+
+    val displayedSources = remember(filteredSources, sortByLatency) {
+        if (sortByLatency) {
+            filteredSources.sortedWith(
+                compareBy<BookSource> { s ->
+                    val status = BookSourceDiagnosticEngine.getStatus(s.bookSourceUrl)
+                    if (status is DiagnosticStatus.Healthy) status.latencyMs else Long.MAX_VALUE
+                }.thenBy { it.bookSourceName }
+            )
+        } else {
+            filteredSources
         }
     }
 
@@ -1210,14 +1239,25 @@ fun SourcesView(
                 )
             }
 
-            Button(onClick = {
-                showImportDialog = true
-                importError = null
-                importSuccessMessage = null
-            }) {
-                Icon(LegadoIcons.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("导入书源")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(
+                    onClick = { showExportDialog = true },
+                    enabled = sources.isNotEmpty()
+                ) {
+                    Icon(LegadoIcons.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("导出书源")
+                }
+
+                Button(onClick = {
+                    showImportDialog = true
+                    importError = null
+                    importSuccessMessage = null
+                }) {
+                    Icon(LegadoIcons.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("导入书源")
+                }
             }
         }
 
@@ -1272,6 +1312,23 @@ fun SourcesView(
                     Spacer(Modifier.width(6.dp))
                     Text("一键测速")
                 }
+            }
+
+            // ⚡ 按延迟排序
+            OutlinedButton(
+                onClick = { sortByLatency = !sortByLatency },
+                enabled = !isTestingAll && filteredSources.isNotEmpty(),
+                shape = RoundedCornerShape(10.dp),
+                colors = if (sortByLatency) ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)) else ButtonDefaults.outlinedButtonColors()
+            ) {
+                Icon(
+                    imageVector = LegadoIcons.SwapVert,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = if (sortByLatency) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(if (sortByLatency) "按延迟升序 ✓" else "按延迟排序")
             }
 
             // ⏸️ 禁用失效源
@@ -1348,7 +1405,7 @@ fun SourcesView(
             }
         }
 
-        if (filteredSources.isEmpty()) {
+        if (displayedSources.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -1373,7 +1430,7 @@ fun SourcesView(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(filteredSources, key = { it.bookSourceUrl }) { source ->
+                items(displayedSources, key = { it.bookSourceUrl }) { source ->
                     var itemStatus by remember(source.bookSourceUrl, isTestingAll) {
                         mutableStateOf(BookSourceDiagnosticEngine.getStatus(source.bookSourceUrl))
                     }
@@ -1546,6 +1603,75 @@ fun SourcesView(
                 }
             }
         }
+    }
+
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text("📤 导出书源备份") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "当前共 ${sources.size} 个书源，可直接导出为标准 Legado 3.0 格式 JSON，方便在手机端或其他电脑间迁移备份。",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                showExportDialog = false
+                                try {
+                                    val jsonStr = kotlinx.serialization.json.Json { prettyPrint = true; ignoreUnknownKeys = true }.encodeToString(sources)
+                                    val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+                                    clipboard.setContents(StringSelection(jsonStr), null)
+                                    statusMessage = "已成功复制 ${sources.size} 个书源 JSON 到系统剪贴板！"
+                                } catch (e: Exception) {
+                                    statusMessage = "复制失败: ${e.message}"
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(LegadoIcons.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("复制到剪贴板")
+                        }
+
+                        Button(
+                            onClick = {
+                                showExportDialog = false
+                                try {
+                                    val dialog = FileDialog(null as Frame?, "导出书源为 JSON 文件", FileDialog.SAVE)
+                                    dialog.file = "legado_sources_${System.currentTimeMillis() / 1000}.json"
+                                    dialog.isVisible = true
+                                    val file = dialog.file
+                                    val dir = dialog.directory
+                                    if (file != null && dir != null) {
+                                        val targetFile = File(dir, file)
+                                        val jsonStr = kotlinx.serialization.json.Json { prettyPrint = true; ignoreUnknownKeys = true }.encodeToString(sources)
+                                        targetFile.writeText(jsonStr, Charsets.UTF_8)
+                                        statusMessage = "书源已成功导出至: ${targetFile.name}"
+                                    }
+                                } catch (e: Exception) {
+                                    statusMessage = "导出失败: ${e.message}"
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(LegadoIcons.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("保存为 .json 文件")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showExportDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     if (showCleanConfirmDialog) {

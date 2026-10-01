@@ -45,6 +45,7 @@ fun CommandPaletteDialog(
     onToggleFullscreen: () -> Unit,
     onToggleDualPage: () -> Unit,
     onOpenAiSettings: () -> Unit,
+    onNavigateToStats: (() -> Unit)? = null,
     onDismissRequest: () -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -137,6 +138,18 @@ fun CommandPaletteDialog(
                 onExecute = { onNavigateToSources(); onDismissRequest() }
             )
         )
+        if (onNavigateToStats != null) {
+            list.add(
+                PaletteAction(
+                    id = "reading_stats",
+                    title = "阅读数据与习惯看板 (365天热力图)",
+                    subtitle = "查看专注时长、累计字数、连续打卡与时段偏好",
+                    category = "阅读分析",
+                    iconEmoji = "📊",
+                    onExecute = { onNavigateToStats(); onDismissRequest() }
+                )
+            )
+        }
         list.add(
             PaletteAction(
                 id = "import_book",

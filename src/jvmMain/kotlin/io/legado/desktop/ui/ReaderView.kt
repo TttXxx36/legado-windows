@@ -69,7 +69,9 @@ import io.legado.desktop.engine.tts.TtsEngine
 import io.legado.desktop.engine.tts.EdgeTtsEngine
 import io.legado.desktop.ui.font.FontManager
 import io.legado.desktop.ui.theme.LegadoIcons
+import io.legado.desktop.engine.analytics.ReadingAnalyticsEngine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
@@ -351,6 +353,25 @@ fun ReaderView(
         while (true) {
             currentTimeStr = java.time.LocalTime.now().format(formatter)
             kotlinx.coroutines.delay(10000L)
+        }
+    }
+
+    // Phase 18: Reading Analytics Heartbeat Loop (records every 15s)
+    LaunchedEffect(book.bookUrl) {
+        val tickIntervalSeconds = 15
+        while (isActive) {
+            kotlinx.coroutines.delay(tickIntervalSeconds * 1000L)
+            try {
+                val estimatedWords = (tickIntervalSeconds * 7).coerceAtMost(300)
+                ReadingAnalyticsEngine.recordReading(
+                    bookUrl = book.bookUrl,
+                    bookName = book.name,
+                    addedSeconds = tickIntervalSeconds,
+                    addedWords = estimatedWords
+                )
+            } catch (e: Exception) {
+                // Silently swallow analytics error
+            }
         }
     }
 
@@ -1308,8 +1329,11 @@ fun ReaderView(
 
                             // Left page footer
                             if (showStatusBar) {
+                                val fullBookPct = if (chapters.isNotEmpty()) {
+                                    String.format("%.1f", (currentChapterIndex + 1).toDouble() / chapters.size * 100.0)
+                                } else "0.0"
                                 Text(
-                                    text = "全书：第 ${currentChapterIndex + 1} / ${chapters.size} 章 (${if (chapters.isNotEmpty()) ((currentChapterIndex + 1) * 100 / chapters.size) else 0}%)",
+                                    text = "全书：第 ${currentChapterIndex + 1} / ${chapters.size} 章 (${fullBookPct}%)",
                                     fontSize = 11.sp,
                                     color = themeText.copy(alpha = 0.4f),
                                     fontFamily = activeFontFamily
@@ -1592,8 +1616,19 @@ fun ReaderView(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val fullBookPct = if (chapters.isNotEmpty()) {
+                                String.format("%.1f", (currentChapterIndex + 1).toDouble() / chapters.size * 100.0)
+                            } else "0.0"
+                            val remainingChars = if (pagedChapter.totalPages > 0) {
+                                val remainingPages = (pagedChapter.totalPages - 1 - currentPageIndex).coerceAtLeast(0)
+                                (pagedChapter.totalCharCount * remainingPages / pagedChapter.totalPages)
+                            } else {
+                                pagedChapter.totalCharCount
+                            }
+                            val remainingMinutes = kotlin.math.max(1, (remainingChars + 400) / 450)
+
                             Text(
-                                text = "全书进度：第 ${currentChapterIndex + 1} / ${chapters.size} 章 (${if (chapters.isNotEmpty()) ((currentChapterIndex + 1) * 100 / chapters.size) else 0}%)",
+                                text = "全书：第 ${currentChapterIndex + 1} / ${chapters.size} 章 (${fullBookPct}%) · 预计还需 ${remainingMinutes} 分钟",
                                 fontSize = 12.sp,
                                 color = themeText.copy(alpha = 0.45f),
                                 fontFamily = activeFontFamily
@@ -2151,6 +2186,48 @@ fun ReaderView(
                     Spacer(Modifier.height(12.dp))
 
                     if (tocTabIndex == 0) {
+                        var tocSearchQuery by remember { mutableStateOf("") }
+                        var tocIsReversed by remember { mutableStateOf(false) }
+
+                        val displayedChapters = remember(chapters, tocSearchQuery, tocIsReversed) {
+                            val base = if (tocSearchQuery.isBlank()) chapters else chapters.filter { it.title.contains(tocSearchQuery, ignoreCase = true) }
+                            if (tocIsReversed) base.reversed() else base
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = tocSearchQuery,
+                                onValueChange = { tocSearchQuery = it },
+                                placeholder = { Text("搜索章节名称...", fontSize = 12.sp) },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).height(46.dp),
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                trailingIcon = {
+                                    if (tocSearchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { tocSearchQuery = "" }, modifier = Modifier.size(20.dp)) {
+                                            Icon(LegadoIcons.Close, contentDescription = "清空", modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                }
+                            )
+                            FilledTonalIconButton(
+                                onClick = { tocIsReversed = !tocIsReversed },
+                                modifier = Modifier.size(46.dp)
+                            ) {
+                                Icon(
+                                    imageVector = LegadoIcons.SwapVert,
+                                    contentDescription = if (tocIsReversed) "切换正序" else "切换倒序",
+                                    tint = if (tocIsReversed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
                         if (book.origin == "local") {
                             Row(
                                 modifier = Modifier
@@ -2177,7 +2254,7 @@ fun ReaderView(
                         }
 
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(chapters) { ch ->
+                            items(displayedChapters) { ch ->
                                 val isCurrent = ch.index == currentChapterIndex
                                 ListItem(
                                     headlineContent = {

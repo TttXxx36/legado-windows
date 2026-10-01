@@ -997,5 +997,69 @@ object LegadoIcons {
             close()
         }
     }
+
+    val BarChart: ImageVector by lazy {
+        buildIcon("BarChart") {
+            moveTo(4f, 9f)
+            horizontalLineTo(8f)
+            verticalLineTo(20f)
+            horizontalLineTo(4f)
+            close()
+            moveTo(10f, 4f)
+            horizontalLineTo(14f)
+            verticalLineTo(20f)
+            horizontalLineTo(10f)
+            close()
+            moveTo(16f, 13f)
+            horizontalLineTo(20f)
+            verticalLineTo(20f)
+            horizontalLineTo(16f)
+            close()
+        }
+    }
+
+    val SwapVert: ImageVector by lazy {
+        buildIcon("SwapVert") {
+            moveTo(16f, 17.01f)
+            verticalLineTo(10f)
+            horizontalLineTo(14f)
+            verticalLineTo(17.01f)
+            horizontalLineTo(11f)
+            lineTo(15f, 21f)
+            lineTo(19f, 17.01f)
+            horizontalLineTo(16f)
+            close()
+            moveTo(9f, 3f)
+            lineTo(5f, 6.99f)
+            horizontalLineTo(8f)
+            verticalLineTo(14f)
+            horizontalLineTo(10f)
+            verticalLineTo(6.99f)
+            horizontalLineTo(13f)
+            lineTo(9f, 3f)
+            close()
+        }
+    }
+
+    val Refresh: ImageVector by lazy {
+        buildIcon("Refresh") {
+            moveTo(17.65f, 6.35f)
+            curveTo(16.2f, 4.9f, 14.21f, 4f, 12f, 4f)
+            curveToRelative(-4.42f, 0f, -7.99f, 3.58f, -7.99f, 8f)
+            reflectiveCurveTo(7.58f, 20f, 12f, 20f)
+            curveToRelative(3.73f, 0f, 6.84f, -2.55f, 7.73f, -6f)
+            horizontalLineToRelative(-2.08f)
+            curveToRelative(-0.82f, 2.33f, -3.04f, 4f, -5.65f, 4f)
+            curveToRelative(-3.31f, 0f, -6f, -2.69f, -6f, -6f)
+            reflectiveCurveToRelative(2.69f, -6f, 6f, -6f)
+            curveToRelative(1.66f, 0f, 3.14f, 0.69f, 4.22f, 1.78f)
+            lineTo(13f, 11f)
+            horizontalLineToRelative(7f)
+            verticalLineTo(4f)
+            lineToRelative(-2.35f, 2.35f)
+            close()
+        }
+    }
 }
+
 

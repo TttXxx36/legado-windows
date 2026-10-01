@@ -157,6 +157,24 @@ object AppDatabase {
                     )
                     """.trimIndent()
                 )
+
+                // Reading Analytics Records table
+                stmt.executeUpdate(
+                    """
+                    CREATE TABLE IF NOT EXISTS read_records (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        bookUrl TEXT NOT NULL,
+                        bookName TEXT NOT NULL,
+                        readDate TEXT NOT NULL,
+                        readTimeSeconds INTEGER DEFAULT 0,
+                        readWordsCount INTEGER DEFAULT 0,
+                        lastReadTimestamp INTEGER DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+                stmt.executeUpdate(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_read_records_book_date ON read_records(bookUrl, readDate)"
+                )
             }
         }
     }
@@ -696,4 +714,130 @@ object AppDatabase {
             }
         }
     }
+
+    // --- Reading Analytics Queries (Phase 18) ---
+    suspend fun recordReading(
+        bookUrl: String,
+        bookName: String,
+        readDate: String,
+        addedSeconds: Int,
+        addedWords: Int,
+        timestamp: Long = System.currentTimeMillis()
+    ) = withContext(Dispatchers.IO) {
+        getConnection().use { conn ->
+            conn.prepareStatement(
+                """
+                INSERT INTO read_records (bookUrl, bookName, readDate, readTimeSeconds, readWordsCount, lastReadTimestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(bookUrl, readDate) DO UPDATE SET
+                    readTimeSeconds = readTimeSeconds + excluded.readTimeSeconds,
+                    readWordsCount = readWordsCount + excluded.readWordsCount,
+                    lastReadTimestamp = excluded.lastReadTimestamp,
+                    bookName = excluded.bookName
+                """.trimIndent()
+            ).use { stmt ->
+                stmt.setString(1, bookUrl)
+                stmt.setString(2, bookName)
+                stmt.setString(3, readDate)
+                stmt.setInt(4, addedSeconds)
+                stmt.setInt(5, addedWords)
+                stmt.setLong(6, timestamp)
+                stmt.executeUpdate()
+            }
+        }
+    }
+
+    suspend fun getTodayReadingSeconds(todayDate: String): Int = withContext(Dispatchers.IO) {
+        getConnection().use { conn ->
+            conn.prepareStatement("SELECT SUM(readTimeSeconds) FROM read_records WHERE readDate = ?").use { stmt ->
+                stmt.setString(1, todayDate)
+                val rs = stmt.executeQuery()
+                if (rs.next()) rs.getInt(1) else 0
+            }
+        }
+    }
+
+    suspend fun getTotalReadingSeconds(): Int = withContext(Dispatchers.IO) {
+        getConnection().use { conn ->
+            conn.prepareStatement("SELECT SUM(readTimeSeconds) FROM read_records").use { stmt ->
+                val rs = stmt.executeQuery()
+                if (rs.next()) rs.getInt(1) else 0
+            }
+        }
+    }
+
+    suspend fun getTotalReadingWords(): Long = withContext(Dispatchers.IO) {
+        getConnection().use { conn ->
+            conn.prepareStatement("SELECT SUM(readWordsCount) FROM read_records").use { stmt ->
+                val rs = stmt.executeQuery()
+                if (rs.next()) rs.getLong(1) else 0L
+            }
+        }
+    }
+
+    suspend fun getDailyActivityMap(startDate: String): Map<String, Int> = withContext(Dispatchers.IO) {
+        val map = mutableMapOf<String, Int>()
+        getConnection().use { conn ->
+            conn.prepareStatement("SELECT readDate, SUM(readTimeSeconds) FROM read_records WHERE readDate >= ? GROUP BY readDate").use { stmt ->
+                stmt.setString(1, startDate)
+                val rs = stmt.executeQuery()
+                while (rs.next()) {
+                    map[rs.getString(1)] = rs.getInt(2)
+                }
+            }
+        }
+        map
+    }
+
+    suspend fun getAllActiveDates(): List<String> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<String>()
+        getConnection().use { conn ->
+            conn.prepareStatement("SELECT DISTINCT readDate FROM read_records WHERE readTimeSeconds >= 60 ORDER BY readDate DESC").use { stmt ->
+                val rs = stmt.executeQuery()
+                while (rs.next()) {
+                    list.add(rs.getString(1))
+                }
+            }
+        }
+        list
+    }
+
+    suspend fun getTopReadBooks(limit: Int = 6): List<BookReadingStat> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<BookReadingStat>()
+        getConnection().use { conn ->
+            conn.prepareStatement(
+                """
+                SELECT bookUrl, bookName, SUM(readTimeSeconds) as totalSec, SUM(readWordsCount) as totalW, MAX(lastReadTimestamp) as lastTs
+                FROM read_records
+                GROUP BY bookUrl
+                ORDER BY totalSec DESC
+                LIMIT ?
+                """.trimIndent()
+            ).use { stmt ->
+                stmt.setInt(1, limit)
+                val rs = stmt.executeQuery()
+                while (rs.next()) {
+                    list.add(
+                        BookReadingStat(
+                            bookUrl = rs.getString("bookUrl"),
+                            bookName = rs.getString("bookName"),
+                            totalSeconds = rs.getInt("totalSec"),
+                            totalWords = rs.getInt("totalW"),
+                            lastReadTimestamp = rs.getLong("lastTs")
+                        )
+                    )
+                }
+            }
+        }
+        list
+    }
 }
+
+data class BookReadingStat(
+    val bookUrl: String,
+    val bookName: String,
+    val totalSeconds: Int,
+    val totalWords: Int,
+    val lastReadTimestamp: Long
+)
+

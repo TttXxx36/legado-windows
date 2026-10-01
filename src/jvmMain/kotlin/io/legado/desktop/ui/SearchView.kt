@@ -16,13 +16,14 @@ import androidx.compose.ui.unit.dp
 import io.legado.desktop.data.db.AppDatabase
 import io.legado.desktop.data.model.Book
 import io.legado.desktop.engine.BookSourceEngine
+import io.legado.desktop.engine.search.AggregatedBook
+import io.legado.desktop.engine.search.SearchRelevanceEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-
-import io.legado.desktop.engine.search.AggregatedBook
-import io.legado.desktop.engine.search.SearchRelevanceEngine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
@@ -51,24 +52,44 @@ fun SearchView(
             }
 
             searchStatus = "正在并发检索 ${sources.size} 个书源..."
-            val deferred = sources.map { source ->
-                async(Dispatchers.IO) {
-                    try {
-                        withTimeoutOrNull(6000L) {
-                            BookSourceEngine.search(source, searchKeyword)
-                        } ?: emptyList()
-                    } catch (e: Exception) {
-                        emptyList()
+            val allRawResults = java.util.Collections.synchronizedList(mutableListOf<Book>())
+            var completedCount = 0
+            val totalSources = sources.size
+
+            coroutineScope {
+                sources.forEach { source ->
+                    launch(Dispatchers.IO) {
+                        try {
+                            val res = withTimeoutOrNull(5000L) {
+                                BookSourceEngine.search(source, searchKeyword)
+                            } ?: emptyList()
+                            if (res.isNotEmpty()) {
+                                allRawResults.addAll(res)
+                                val snapshot = synchronized(allRawResults) { allRawResults.toList() }
+                                val partialAgg = SearchRelevanceEngine.aggregateSearchResults(snapshot, searchKeyword)
+                                withContext(Dispatchers.Main) {
+                                    searchResults.clear()
+                                    searchResults.addAll(partialAgg)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // ignore individual source error
+                        } finally {
+                            completedCount++
+                            if (isSearching) {
+                                searchStatus = "检索进度: $completedCount / $totalSources 书源 (已找到 ${searchResults.size} 部作品)..."
+                            }
+                        }
                     }
                 }
             }
 
-            val rawResults = deferred.awaitAll().flatten()
-            val aggregated = SearchRelevanceEngine.aggregateSearchResults(rawResults, searchKeyword)
+            val finalSnapshot = synchronized(allRawResults) { allRawResults.toList() }
+            val finalAgg = SearchRelevanceEngine.aggregateSearchResults(finalSnapshot, searchKeyword)
             searchResults.clear()
-            searchResults.addAll(aggregated)
+            searchResults.addAll(finalAgg)
             isSearching = false
-            searchStatus = if (aggregated.isEmpty()) "未找到相关书籍" else "共检索到 ${aggregated.size} 本书籍（已智能聚合多书源，按相关度排序）"
+            searchStatus = if (finalAgg.isEmpty()) "未找到相关书籍" else "共检索到 ${finalAgg.size} 本书籍（已智能聚合多书源，按相关度排序）"
         }
     }
 
