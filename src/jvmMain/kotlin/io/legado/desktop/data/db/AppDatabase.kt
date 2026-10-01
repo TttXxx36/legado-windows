@@ -175,6 +175,21 @@ object AppDatabase {
                 stmt.executeUpdate(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_read_records_book_date ON read_records(bookUrl, readDate)"
                 )
+
+                // Phase 19: Bookshelf Groups table & customGroup column migration
+                try {
+                    stmt.executeUpdate("ALTER TABLE books ADD COLUMN customGroup TEXT DEFAULT ''")
+                } catch (_: Exception) {}
+
+                stmt.executeUpdate(
+                    """
+                    CREATE TABLE IF NOT EXISTS book_groups (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        groupName TEXT UNIQUE NOT NULL,
+                        orderIndex INTEGER DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
             }
         }
     }
@@ -185,6 +200,7 @@ object AppDatabase {
             conn.prepareStatement("SELECT * FROM books ORDER BY durChapterTime DESC, orderIndex ASC").use { stmt ->
                 val rs = stmt.executeQuery()
                 while (rs.next()) {
+                    val groupVal = try { rs.getString("customGroup")?.ifBlank { null } } catch (_: Exception) { null }
                     list.add(
                         Book(
                             bookUrl = rs.getString("bookUrl"),
@@ -194,6 +210,7 @@ object AppDatabase {
                             coverUrl = rs.getString("coverUrl"),
                             intro = rs.getString("intro"),
                             type = rs.getInt("type"),
+                            customGroup = groupVal,
                             durChapterTitle = rs.getString("durChapterTitle"),
                             durChapterIndex = rs.getInt("durChapterIndex"),
                             durChapterPos = rs.getInt("durChapterPos"),
@@ -218,8 +235,8 @@ object AppDatabase {
                 INSERT INTO books (
                     bookUrl, name, author, kind, coverUrl, intro, type,
                     durChapterTitle, durChapterIndex, durChapterPos, durChapterTime,
-                    totalChapterNum, latestChapterTitle, origin, originName, tocUrl, orderIndex
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    totalChapterNum, latestChapterTitle, origin, originName, tocUrl, orderIndex, customGroup
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(bookUrl) DO UPDATE SET
                     name = excluded.name,
                     author = excluded.author,
@@ -236,7 +253,8 @@ object AppDatabase {
                     origin = excluded.origin,
                     originName = excluded.originName,
                     tocUrl = excluded.tocUrl,
-                    orderIndex = excluded.orderIndex
+                    orderIndex = excluded.orderIndex,
+                    customGroup = excluded.customGroup
             """.trimIndent()
             conn.prepareStatement(sql).use { stmt ->
                 stmt.setString(1, book.bookUrl)
@@ -256,6 +274,7 @@ object AppDatabase {
                 stmt.setString(15, book.originName)
                 stmt.setString(16, book.tocUrl)
                 stmt.setInt(17, book.order)
+                stmt.setString(18, book.customGroup ?: "")
                 stmt.executeUpdate()
             }
         }
@@ -279,6 +298,119 @@ object AppDatabase {
                 stmt.setString(1, bookUrl)
                 stmt.executeUpdate()
             }
+        }
+    }
+
+    suspend fun deleteBooks(bookUrls: List<String>) = withContext(Dispatchers.IO) {
+        if (bookUrls.isEmpty()) return@withContext
+        getConnection().use { conn ->
+            val placeholders = bookUrls.joinToString(",") { "?" }
+            conn.prepareStatement("DELETE FROM books WHERE bookUrl IN ($placeholders)").use { stmt ->
+                bookUrls.forEachIndexed { i, url -> stmt.setString(i + 1, url) }
+                stmt.executeUpdate()
+            }
+            conn.prepareStatement("DELETE FROM book_chapters WHERE bookUrl IN ($placeholders)").use { stmt ->
+                bookUrls.forEachIndexed { i, url -> stmt.setString(i + 1, url) }
+                stmt.executeUpdate()
+            }
+            conn.prepareStatement("DELETE FROM bookmarks WHERE bookUrl IN ($placeholders)").use { stmt ->
+                bookUrls.forEachIndexed { i, url -> stmt.setString(i + 1, url) }
+                stmt.executeUpdate()
+            }
+            conn.prepareStatement("DELETE FROM annotations WHERE bookUrl IN ($placeholders)").use { stmt ->
+                bookUrls.forEachIndexed { i, url -> stmt.setString(i + 1, url) }
+                stmt.executeUpdate()
+            }
+        }
+    }
+
+    suspend fun updateBooksGroup(bookUrls: List<String>, newGroup: String?) = withContext(Dispatchers.IO) {
+        if (bookUrls.isEmpty()) return@withContext
+        getConnection().use { conn ->
+            val placeholders = bookUrls.joinToString(",") { "?" }
+            conn.prepareStatement("UPDATE books SET customGroup = ? WHERE bookUrl IN ($placeholders)").use { stmt ->
+                stmt.setString(1, newGroup ?: "")
+                bookUrls.forEachIndexed { i, url -> stmt.setString(i + 2, url) }
+                stmt.executeUpdate()
+            }
+        }
+    }
+
+    // --- Book Groups (Phase 19) ---
+    suspend fun getAllBookGroups(): List<String> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<String>()
+        getConnection().use { conn ->
+            conn.prepareStatement("SELECT groupName FROM book_groups ORDER BY orderIndex ASC, id ASC").use { stmt ->
+                val rs = stmt.executeQuery()
+                while (rs.next()) {
+                    list.add(rs.getString(1))
+                }
+            }
+        }
+        if (list.isEmpty()) {
+            val defaults = listOf("在读", "养肥", "完结")
+            defaults.forEachIndexed { idx, name ->
+                createBookGroup(name, idx)
+            }
+            defaults
+        } else {
+            list
+        }
+    }
+
+    suspend fun createBookGroup(name: String, orderIndex: Int = 0): Boolean = withContext(Dispatchers.IO) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return@withContext false
+        try {
+            getConnection().use { conn ->
+                conn.prepareStatement("INSERT OR IGNORE INTO book_groups (groupName, orderIndex) VALUES (?, ?)").use { stmt ->
+                    stmt.setString(1, trimmed)
+                    stmt.setInt(2, orderIndex)
+                    stmt.executeUpdate() > 0
+                }
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    suspend fun renameBookGroup(oldName: String, newName: String): Boolean = withContext(Dispatchers.IO) {
+        val trimmed = newName.trim()
+        if (trimmed.isBlank() || trimmed == oldName) return@withContext false
+        try {
+            getConnection().use { conn ->
+                conn.prepareStatement("UPDATE book_groups SET groupName = ? WHERE groupName = ?").use { stmt ->
+                    stmt.setString(1, trimmed)
+                    stmt.setString(2, oldName)
+                    stmt.executeUpdate()
+                }
+                conn.prepareStatement("UPDATE books SET customGroup = ? WHERE customGroup = ?").use { stmt ->
+                    stmt.setString(1, trimmed)
+                    stmt.setString(2, oldName)
+                    stmt.executeUpdate()
+                }
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    suspend fun deleteBookGroup(name: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            getConnection().use { conn ->
+                conn.prepareStatement("DELETE FROM book_groups WHERE groupName = ?").use { stmt ->
+                    stmt.setString(1, name)
+                    stmt.executeUpdate()
+                }
+                conn.prepareStatement("UPDATE books SET customGroup = '' WHERE customGroup = ?").use { stmt ->
+                    stmt.setString(1, name)
+                    stmt.executeUpdate()
+                }
+            }
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 

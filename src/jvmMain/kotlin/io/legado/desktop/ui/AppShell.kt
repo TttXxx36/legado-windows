@@ -3,6 +3,7 @@ package io.legado.desktop.ui
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -304,6 +306,43 @@ fun AppShell(
                             onBookImported = { importedBook ->
                                 if (!books.any { it.bookUrl == importedBook.bookUrl }) {
                                     books.add(0, importedBook)
+                                }
+                            },
+                            onDeleteBooks = { targetBooks, moveToTrash ->
+                                scope.launch {
+                                    val urls = targetBooks.map { it.bookUrl }
+                                    AppDatabase.deleteBooks(urls)
+                                    if (moveToTrash) {
+                                        targetBooks.forEach { b ->
+                                            try {
+                                                val file = if (b.bookUrl.startsWith("file://")) {
+                                                    File(URI(b.bookUrl))
+                                                } else if (b.origin == "LOCAL" || File(b.bookUrl).exists()) {
+                                                    File(b.bookUrl)
+                                                } else null
+                                                if (file != null && file.exists()) {
+                                                    if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH)) {
+                                                        Desktop.getDesktop().moveToTrash(file)
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                            }
+                                        }
+                                    }
+                                    books.removeAll { it.bookUrl in urls }
+                                }
+                            },
+                            onUpdateBooksGroup = { targetBooks, newGroup ->
+                                scope.launch {
+                                    val urls = targetBooks.map { it.bookUrl }
+                                    AppDatabase.updateBooksGroup(urls, newGroup)
+                                    for (i in books.indices) {
+                                        val b = books[i]
+                                        if (b.bookUrl in urls) {
+                                            books[i] = b.copy(customGroup = newGroup)
+                                        }
+                                    }
                                 }
                             }
                         )
@@ -631,384 +670,1008 @@ fun DragDropOverlay(
     }
 }
 
+enum class BookSortOrder(val title: String) {
+    LAST_READ("最近阅读"),
+    ADD_TIME("添加时间"),
+    NAME("书名 A-Z"),
+    DURATION("阅读时长")
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BookshelfView(
     books: List<Book>,
     onOpenBook: (Book) -> Unit,
     onDeleteBook: (Book) -> Unit,
-    onBookImported: (Book) -> Unit = {}
+    onBookImported: (Book) -> Unit = {},
+    onDeleteBooks: (List<Book>, Boolean) -> Unit = { _, _ -> },
+    onUpdateBooksGroup: (List<Book>, String?) -> Unit = { _, _ -> }
 ) {
     val scope = rememberCoroutineScope()
     var isImporting by remember { mutableStateOf(false) }
     var importMessage by remember { mutableStateOf<String?>(null) }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "书架",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "共 ${books.size} 本书籍",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+    // Phase 19: Groups, Search, Sort & Batch states
+    var groups by remember { mutableStateOf(listOf("在读", "养肥", "完结")) }
+    LaunchedEffect(Unit) {
+        groups = AppDatabase.getAllBookGroups()
+    }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (isImporting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.width(8.dp))
+    val allTabs = remember(groups) { listOf("全部") + groups }
+    var selectedTabIdx by rememberSaveable { mutableStateOf(0) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var sortOrder by rememberSaveable { mutableStateOf(BookSortOrder.LAST_READ) }
+    var sortAscending by rememberSaveable { mutableStateOf(false) }
+    var showSortMenu by remember { mutableStateOf(false) }
+
+    // Batch mode state
+    var isBatchMode by rememberSaveable { mutableStateOf(false) }
+    val selectedBookUrls = remember { mutableStateListOf<String>() }
+
+    // Dialogs state
+    var showCreateGroupDialog by remember { mutableStateOf(false) }
+    var newGroupNameInput by remember { mutableStateOf("") }
+
+    var groupToRename by remember { mutableStateOf<String?>(null) }
+    var renameGroupInput by remember { mutableStateOf("") }
+
+    var groupToDelete by remember { mutableStateOf<String?>(null) }
+
+    var showMoveToGroupDialog by remember { mutableStateOf(false) }
+    var safeDeleteTargetBooks by remember { mutableStateOf<List<Book>?>(null) }
+
+    var batchCacheBook by remember { mutableStateOf<Book?>(null) }
+    var batchCacheChapters by remember { mutableStateOf<List<BookChapter>>(emptyList()) }
+    var isPreparingChapters by remember { mutableStateOf(false) }
+    var exportBook by remember { mutableStateOf<Book?>(null) }
+
+    val currentTab = allTabs.getOrElse(selectedTabIdx) { "全部" }
+
+    val filteredBooks = remember(books.toList(), currentTab, searchQuery) {
+        books.filter { book ->
+            val matchesQuery = searchQuery.isBlank() ||
+                book.name.contains(searchQuery, ignoreCase = true) ||
+                book.author.contains(searchQuery, ignoreCase = true)
+            if (!matchesQuery) return@filter false
+
+            when (currentTab) {
+                "全部" -> true
+                "在读" -> book.customGroup == "在读" || (book.customGroup.isNullOrBlank() && book.durChapterTime > 0)
+                "养肥" -> book.customGroup == "养肥"
+                "完结" -> book.customGroup == "完结"
+                else -> book.customGroup == currentTab
+            }
+        }
+    }
+
+    val displayedBooks = remember(filteredBooks, sortOrder, sortAscending) {
+        val sorted = when (sortOrder) {
+            BookSortOrder.LAST_READ -> filteredBooks.sortedBy { it.durChapterTime }
+            BookSortOrder.ADD_TIME -> filteredBooks.sortedBy { it.order }
+            BookSortOrder.NAME -> filteredBooks.sortedBy { it.name.lowercase() }
+            BookSortOrder.DURATION -> filteredBooks.sortedBy { it.durChapterTime }
+        }
+        if (sortAscending) sorted else sorted.reversed()
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Header Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
                     Text(
-                        text = "正在分章导入...",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
+                        text = "书架",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "共 ${books.size} 本书籍" + (if (currentTab != "全部") " · 当前分组: $currentTab (${filteredBooks.size}本)" else ""),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
-                Button(
-                    onClick = {
-                        val dialog = FileDialog(null as Frame?, "选择本地电子书 (.txt, .epub)", FileDialog.LOAD)
-                        dialog.setFilenameFilter { _, name ->
-                            name.endsWith(".txt", ignoreCase = true) || name.endsWith(".epub", ignoreCase = true)
-                        }
-                        dialog.isVisible = true
-                        val file = dialog.file
-                        val dir = dialog.directory
-                        if (file != null && dir != null) {
-                            val selectedFile = File(dir, file)
-                            scope.launch {
-                                isImporting = true
-                                importMessage = null
-                                try {
-                                    val imported = LocalBookImporter.importBook(selectedFile)
-                                    onBookImported(imported)
-                                    importMessage = "《${imported.name}》(${if (selectedFile.extension.equals("epub", true)) "EPUB" else "TXT"}) 导入成功，共生成 ${imported.totalChapterNum} 个章节！"
-                                } catch (e: Exception) {
-                                    importMessage = "导入失败: ${e.message}"
-                                } finally {
-                                    isImporting = false
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (isImporting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "正在分章导入...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+
+                    // Batch Mode Toggle Button
+                    if (books.isNotEmpty()) {
+                        if (!isBatchMode) {
+                            OutlinedButton(
+                                onClick = {
+                                    isBatchMode = true
+                                    selectedBookUrls.clear()
                                 }
+                            ) {
+                                Icon(LegadoIcons.FilterList, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("批量管理")
+                            }
+                        } else {
+                            FilledTonalButton(
+                                onClick = {
+                                    isBatchMode = false
+                                    selectedBookUrls.clear()
+                                }
+                            ) {
+                                Icon(LegadoIcons.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("退出管理")
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            val dialog = FileDialog(null as Frame?, "选择本地电子书 (.txt, .epub)", FileDialog.LOAD)
+                            dialog.setFilenameFilter { _, name ->
+                                name.endsWith(".txt", ignoreCase = true) || name.endsWith(".epub", ignoreCase = true)
+                            }
+                            dialog.isVisible = true
+                            val file = dialog.file
+                            val dir = dialog.directory
+                            if (file != null && dir != null) {
+                                val selectedFile = File(dir, file)
+                                scope.launch {
+                                    isImporting = true
+                                    importMessage = null
+                                    try {
+                                        val imported = LocalBookImporter.importBook(selectedFile)
+                                        onBookImported(imported)
+                                        importMessage = "《${imported.name}》(${if (selectedFile.extension.equals("epub", true)) "EPUB" else "TXT"}) 导入成功，共生成 ${imported.totalChapterNum} 个章节！"
+                                    } catch (e: Exception) {
+                                        importMessage = "导入失败: ${e.message}"
+                                    } finally {
+                                        isImporting = false
+                                    }
+                                }
+                            }
+                        },
+                        enabled = !isImporting,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    ) {
+                        Icon(LegadoIcons.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("导入本地书籍")
+                    }
+                }
+            }
+
+            if (importMessage != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = importMessage!!,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { importMessage = null },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(LegadoIcons.Close, contentDescription = "关闭", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Phase 19: Horizontal Scrollable Group Tabs Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                allTabs.forEachIndexed { idx, tabName ->
+                    val isSelected = selectedTabIdx == idx
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { selectedTabIdx = idx },
+                        label = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(tabName)
+                                if (tabName !in listOf("全部", "在读", "养肥", "完结")) {
+                                    Spacer(Modifier.width(4.dp))
+                                    var showMenu by remember { mutableStateOf(false) }
+                                    Box {
+                                        IconButton(
+                                            onClick = { showMenu = true },
+                                            modifier = Modifier.size(18.dp)
+                                        ) {
+                                            Icon(LegadoIcons.Tune, contentDescription = "分组设置", modifier = Modifier.size(12.dp))
+                                        }
+                                        DropdownMenu(
+                                            expanded = showMenu,
+                                            onDismissRequest = { showMenu = false }
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = { Text("重命名") },
+                                                onClick = {
+                                                    showMenu = false
+                                                    groupToRename = tabName
+                                                    renameGroupInput = tabName
+                                                },
+                                                leadingIcon = { Icon(LegadoIcons.Edit, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("删除分组", color = MaterialTheme.colorScheme.error) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    groupToDelete = tabName
+                                                },
+                                                leadingIcon = { Icon(LegadoIcons.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp)) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    )
+                }
+
+                // Add Group Button
+                OutlinedButton(
+                    onClick = {
+                        newGroupNameInput = ""
+                        showCreateGroupDialog = true
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Icon(LegadoIcons.Add, contentDescription = "新建分组", modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("新建分组", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Phase 19: Search & Sort Filter Toolbar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("在书架中搜索书名、作者...", style = MaterialTheme.typography.bodySmall) },
+                    leadingIcon = { Icon(LegadoIcons.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(20.dp)) {
+                                Icon(LegadoIcons.Close, contentDescription = "清空", modifier = Modifier.size(14.dp))
                             }
                         }
                     },
-                    enabled = !isImporting,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                // Sort Dropdown
+                Box {
+                    OutlinedButton(
+                        onClick = { showSortMenu = true },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Icon(LegadoIcons.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("排序: ${sortOrder.title}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    DropdownMenu(
+                        expanded = showSortMenu,
+                        onDismissRequest = { showSortMenu = false }
+                    ) {
+                        BookSortOrder.values().forEach { order ->
+                            DropdownMenuItem(
+                                text = { Text(order.title) },
+                                onClick = {
+                                    sortOrder = order
+                                    showSortMenu = false
+                                },
+                                trailingIcon = {
+                                    if (sortOrder == order) {
+                                        Icon(LegadoIcons.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // Ascending / Descending Toggle
+                IconButton(
+                    onClick = { sortAscending = !sortAscending },
+                    modifier = Modifier.size(48.dp)
                 ) {
-                    Icon(LegadoIcons.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("导入本地书籍")
+                    Icon(
+                        LegadoIcons.SwapVert,
+                        contentDescription = if (sortAscending) "升序" else "降序",
+                        tint = if (sortAscending) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (isBatchMode) {
+                    OutlinedButton(
+                        onClick = {
+                            val allUrls = displayedBooks.map { it.bookUrl }
+                            if (selectedBookUrls.containsAll(allUrls)) {
+                                selectedBookUrls.clear()
+                            } else {
+                                selectedBookUrls.clear()
+                                selectedBookUrls.addAll(allUrls)
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Text(if (selectedBookUrls.containsAll(displayedBooks.map { it.bookUrl }) && displayedBooks.isNotEmpty()) "取消全选" else "全选")
+                    }
                 }
             }
-        }
 
-        if (importMessage != null) {
-            Spacer(modifier = Modifier.height(12.dp))
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                ),
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Phase 17: 极速续读看板 (Quick Resume Hero Banner) - Show when not in batch mode and no active search
+            if (!isBatchMode && searchQuery.isBlank() && selectedTabIdx == 0) {
+                val lastReadBook = remember(books) {
+                    books.filter { it.durChapterTime > 0 }.maxByOrNull { it.durChapterTime } ?: books.firstOrNull()
+                }
+                if (lastReadBook != null) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { onOpenBook(lastReadBook) },
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(48.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            LegadoIcons.Book,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(26.dp)
+                                        )
+                                    }
+                                }
+
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                "⚡ 极速续读",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Text(
+                                            text = "《${lastReadBook.name}》",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "· ${lastReadBook.author.ifBlank { "未知作者" }}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    Text(
+                                        text = "当前读至：${lastReadBook.durChapterTitle?.ifBlank { "第 1 章" } ?: "第 1 章"}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                                ) {
+                                    Text(
+                                        "Ctrl+K 指挥中心",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+
+                                Button(
+                                    onClick = { onOpenBook(lastReadBook) },
+                                    shape = RoundedCornerShape(20.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                                ) {
+                                    Icon(LegadoIcons.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("立即续读", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
+
+            if (displayedBooks.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = importMessage!!,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.weight(1f)
+                        text = if (searchQuery.isNotBlank()) "没有找到匹配“$searchQuery”的书籍" else "该分组暂无书籍",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    IconButton(
-                        onClick = { importMessage = null },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(LegadoIcons.Close, contentDescription = "关闭", modifier = Modifier.size(16.dp))
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 180.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.fillMaxSize().padding(bottom = if (isBatchMode && selectedBookUrls.isNotEmpty()) 80.dp else 0.dp)
+                ) {
+                    items(displayedBooks, key = { it.bookUrl }) { book ->
+                        val isSelected = selectedBookUrls.contains(book.bookUrl)
+                        BookCard(
+                            book = book,
+                            isBatchMode = isBatchMode,
+                            isSelected = isSelected,
+                            onToggleSelect = {
+                                if (isSelected) {
+                                    selectedBookUrls.remove(book.bookUrl)
+                                } else {
+                                    selectedBookUrls.add(book.bookUrl)
+                                }
+                            },
+                            onOpen = {
+                                if (isBatchMode) {
+                                    if (isSelected) selectedBookUrls.remove(book.bookUrl) else selectedBookUrls.add(book.bookUrl)
+                                } else {
+                                    onOpenBook(book)
+                                }
+                            },
+                            onCache = {
+                                batchCacheBook = book
+                                scope.launch {
+                                    isPreparingChapters = true
+                                    var chs = AppDatabase.getChapters(book.bookUrl)
+                                    if (chs.isEmpty()) {
+                                        val allSources = AppDatabase.getAllBookSources()
+                                        val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
+                                        if (source != null) {
+                                            try {
+                                                chs = BookSourceEngine.getChapters(source, book)
+                                                if (chs.isNotEmpty()) {
+                                                    AppDatabase.saveChapters(book.bookUrl, chs)
+                                                }
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
+                                    batchCacheChapters = chs
+                                    isPreparingChapters = false
+                                }
+                            },
+                            onExport = {
+                                exportBook = book
+                            },
+                            onDelete = {
+                                safeDeleteTargetBooks = listOf(book)
+                            }
+                        )
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Phase 17: 极速续读看板 (Quick Resume Hero Banner)
-        val lastReadBook = remember(books) {
-            books.filter { it.durChapterTime > 0 }.maxByOrNull { it.durChapterTime } ?: books.firstOrNull()
-        }
-        if (lastReadBook != null) {
+        // Phase 19: Floating Batch Action Bar
+        if (isBatchMode && selectedBookUrls.isNotEmpty()) {
             Surface(
                 modifier = Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { onOpenBook(lastReadBook) },
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
-                shape = RoundedCornerShape(16.dp)
+                    .padding(16.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shadowElevation = 8.dp,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
                 Row(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Surface(
-                            modifier = Modifier.size(48.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primary
+                    Text(
+                        "已选中 ${selectedBookUrls.size} 本书籍",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            onClick = { showMoveToGroupDialog = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    LegadoIcons.Book,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(26.dp)
-                                )
-                            }
+                            Icon(LegadoIcons.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("移入分组")
                         }
 
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                ) {
-                                    Text(
-                                        "⚡ 极速续读",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
+                        OutlinedButton(
+                            onClick = {
+                                val targets = books.filter { it.bookUrl in selectedBookUrls }
+                                scope.launch {
+                                    val allSources = AppDatabase.getAllBookSources()
+                                    for (b in targets) {
+                                        var chs = AppDatabase.getChapters(b.bookUrl)
+                                        val s = allSources.firstOrNull { it.bookSourceUrl == b.origin }
+                                        if (s != null) {
+                                            if (chs.isEmpty()) {
+                                                try {
+                                                    chs = BookSourceEngine.getChapters(s, b)
+                                                    if (chs.isNotEmpty()) AppDatabase.saveChapters(b.bookUrl, chs)
+                                                } catch (_: Exception) {}
+                                            }
+                                            if (chs.isNotEmpty()) {
+                                                BookCacheEngine.startBatchDownload(b, s, chs, b.durChapterIndex, 50)
+                                            }
+                                        }
+                                    }
                                 }
-                                Text(
-                                    text = "《${lastReadBook.name}》",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "· ${lastReadBook.author.ifBlank { "未知作者" }}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-
-                            Text(
-                                text = "当前读至：${lastReadBook.durChapterTitle?.ifBlank { "第 1 章" } ?: "第 1 章"}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                                selectedBookUrls.clear()
+                                isBatchMode = false
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Text(
-                                "Ctrl+K 指挥中心",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
+                            Icon(LegadoIcons.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("批量缓存(50章)")
                         }
 
                         Button(
-                            onClick = { onOpenBook(lastReadBook) },
-                            shape = RoundedCornerShape(20.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                            onClick = {
+                                safeDeleteTargetBooks = books.filter { it.bookUrl in selectedBookUrls }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Icon(LegadoIcons.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("立即续读", fontWeight = FontWeight.Bold)
+                            Icon(LegadoIcons.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("批量删除")
+                        }
+
+                        IconButton(
+                            onClick = {
+                                selectedBookUrls.clear()
+                                isBatchMode = false
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(LegadoIcons.Close, contentDescription = "取消批量")
                         }
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
         }
+    }
 
-        var batchCacheBook by remember { mutableStateOf<Book?>(null) }
-        var batchCacheChapters by remember { mutableStateOf<List<BookChapter>>(emptyList()) }
-        var isPreparingChapters by remember { mutableStateOf(false) }
-        var exportBook by remember { mutableStateOf<Book?>(null) }
+    // Dialogs: Batch Cache Dialog
+    if (batchCacheBook != null) {
+        AlertDialog(
+            onDismissRequest = { batchCacheBook = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(LegadoIcons.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("离线批量缓存: 《${batchCacheBook!!.name}》", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (isPreparingChapters) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Text("正在拉取最新章节目录...", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    } else {
+                        Text("全书共 ${batchCacheChapters.size} 个章节，已就绪可执行离线下载。", style = MaterialTheme.typography.bodyMedium)
+                        HorizontalDivider()
 
-        if (books.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "书架空空如也，快导入书籍或在“发现”中搜索吧",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 180.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(books) { book ->
-                    BookCard(
-                        book = book,
-                        onOpen = { onOpenBook(book) },
-                        onCache = {
-                            batchCacheBook = book
-                            scope.launch {
-                                isPreparingChapters = true
-                                var chs = AppDatabase.getChapters(book.bookUrl)
-                                if (chs.isEmpty()) {
+                        val totalCh = batchCacheChapters.size
+                        val currentDur = batchCacheBook!!.durChapterIndex.coerceIn(0, (totalCh - 1).coerceAtLeast(0))
+                        val remain = (totalCh - currentDur).coerceAtLeast(0)
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
                                     val allSources = AppDatabase.getAllBookSources()
-                                    val source = allSources.firstOrNull { it.bookSourceUrl == book.origin }
-                                    if (source != null) {
-                                        try {
-                                            chs = BookSourceEngine.getChapters(source, book)
-                                            if (chs.isNotEmpty()) {
-                                                AppDatabase.saveChapters(book.bookUrl, chs)
-                                            }
-                                        } catch (_: Exception) {}
+                                    val source = allSources.firstOrNull { it.bookSourceUrl == batchCacheBook!!.origin }
+                                    if (source != null && batchCacheChapters.isNotEmpty()) {
+                                        BookCacheEngine.startBatchDownload(batchCacheBook!!, source, batchCacheChapters, currentDur, 50)
                                     }
                                 }
-                                batchCacheChapters = chs
-                                isPreparingChapters = false
-                            }
-                        },
-                        onExport = {
-                            exportBook = book
-                        },
-                        onDelete = { onDeleteBook(book) }
-                    )
+                                batchCacheBook = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("📥 缓存后 50 章 (${minOf(50, remain)} 章)")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    val allSources = AppDatabase.getAllBookSources()
+                                    val source = allSources.firstOrNull { it.bookSourceUrl == batchCacheBook!!.origin }
+                                    if (source != null && batchCacheChapters.isNotEmpty()) {
+                                        BookCacheEngine.startBatchDownload(batchCacheBook!!, source, batchCacheChapters, currentDur, 100)
+                                    }
+                                }
+                                batchCacheBook = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("📥 缓存后 100 章 (${minOf(100, remain)} 章)")
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                scope.launch {
+                                    val allSources = AppDatabase.getAllBookSources()
+                                    val source = allSources.firstOrNull { it.bookSourceUrl == batchCacheBook!!.origin }
+                                    if (source != null && batchCacheChapters.isNotEmpty()) {
+                                        BookCacheEngine.startBatchDownload(batchCacheBook!!, source, batchCacheChapters, 0, totalCh)
+                                    }
+                                }
+                                batchCacheBook = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("⚡ 缓存全本书籍 (全书 $totalCh 章)")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { batchCacheBook = null }) {
+                    Text("关闭")
                 }
             }
-        }
+        )
+    }
 
-        if (batchCacheBook != null) {
-            AlertDialog(
-                onDismissRequest = { batchCacheBook = null },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(LegadoIcons.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text("离线批量缓存: 《${batchCacheBook!!.name}》", fontWeight = FontWeight.Bold)
+    // Dialogs: Export Book Dialog
+    if (exportBook != null) {
+        BookExportDialog(
+            book = exportBook!!,
+            onDismissRequest = { exportBook = null }
+        )
+    }
+
+    // Phase 19 Dialogs: Create Group Dialog
+    if (showCreateGroupDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateGroupDialog = false },
+            title = { Text("新建书架分组", fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = newGroupNameInput,
+                    onValueChange = { newGroupNameInput = it },
+                    label = { Text("分组名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = newGroupNameInput.trim()
+                        if (name.isNotBlank()) {
+                            scope.launch {
+                                AppDatabase.createBookGroup(name, groups.size)
+                                groups = AppDatabase.getAllBookGroups()
+                            }
+                        }
+                        showCreateGroupDialog = false
                     }
-                },
-                text = {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        if (isPreparingChapters) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                Text("正在拉取最新章节目录...", style = MaterialTheme.typography.bodyMedium)
+                ) {
+                    Text("创建")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateGroupDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // Phase 19 Dialogs: Rename Group Dialog
+    if (groupToRename != null) {
+        AlertDialog(
+            onDismissRequest = { groupToRename = null },
+            title = { Text("重命名分组", fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = renameGroupInput,
+                    onValueChange = { renameGroupInput = it },
+                    label = { Text("新分组名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val oldName = groupToRename!!
+                        val newName = renameGroupInput.trim()
+                        if (newName.isNotBlank() && newName != oldName) {
+                            scope.launch {
+                                AppDatabase.renameBookGroup(oldName, newName)
+                                groups = AppDatabase.getAllBookGroups()
+                                books.forEach { b ->
+                                    if (b.customGroup == oldName) b.customGroup = newName
+                                }
                             }
-                        } else {
-                            Text("全书共 ${batchCacheChapters.size} 个章节，已就绪可执行离线下载。", style = MaterialTheme.typography.bodyMedium)
-                            HorizontalDivider()
+                        }
+                        groupToRename = null
+                    }
+                ) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { groupToRename = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
-                            val totalCh = batchCacheChapters.size
-                            val currentDur = batchCacheBook!!.durChapterIndex.coerceIn(0, (totalCh - 1).coerceAtLeast(0))
-                            val remain = (totalCh - currentDur).coerceAtLeast(0)
-
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        val allSources = AppDatabase.getAllBookSources()
-                                        val source = allSources.firstOrNull { it.bookSourceUrl == batchCacheBook!!.origin }
-                                        if (source != null && batchCacheChapters.isNotEmpty()) {
-                                            BookCacheEngine.startBatchDownload(batchCacheBook!!, source, batchCacheChapters, currentDur, 50)
-                                        }
-                                    }
-                                    batchCacheBook = null
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("📥 缓存后 50 章 (${minOf(50, remain)} 章)")
+    // Phase 19 Dialogs: Delete Group Dialog
+    if (groupToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { groupToDelete = null },
+            title = { Text("删除分组", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("确认删除分组《${groupToDelete}》？分组内的书籍不会被删除，仅重置为未分组状态。")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = groupToDelete!!
+                        scope.launch {
+                            AppDatabase.deleteBookGroup(name)
+                            groups = AppDatabase.getAllBookGroups()
+                            books.forEach { b ->
+                                if (b.customGroup == name) b.customGroup = null
                             }
+                        }
+                        if (selectedTabIdx > 0 && allTabs.getOrNull(selectedTabIdx) == name) {
+                            selectedTabIdx = 0
+                        }
+                        groupToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text("确认删除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { groupToDelete = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        val allSources = AppDatabase.getAllBookSources()
-                                        val source = allSources.firstOrNull { it.bookSourceUrl == batchCacheBook!!.origin }
-                                        if (source != null && batchCacheChapters.isNotEmpty()) {
-                                            BookCacheEngine.startBatchDownload(batchCacheBook!!, source, batchCacheChapters, currentDur, 100)
-                                        }
-                                    }
-                                    batchCacheBook = null
+    // Phase 19 Dialogs: Move to Group Dialog
+    if (showMoveToGroupDialog) {
+        val moveOptions = listOf("未分组", "在读", "养肥", "完结") + groups.filter { it !in listOf("在读", "养肥", "完结") }
+        AlertDialog(
+            onDismissRequest = { showMoveToGroupDialog = false },
+            title = { Text("移入书架分组", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    moveOptions.forEach { opt ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    val targetGroup = if (opt == "未分组") null else opt
+                                    val targets = books.filter { it.bookUrl in selectedBookUrls }
+                                    onUpdateBooksGroup(targets, targetGroup)
+                                    selectedBookUrls.clear()
+                                    isBatchMode = false
+                                    showMoveToGroupDialog = false
                                 },
-                                modifier = Modifier.fillMaxWidth()
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text("📥 缓存后 100 章 (${minOf(100, remain)} 章)")
-                            }
-
-                            FilledTonalButton(
-                                onClick = {
-                                    scope.launch {
-                                        val allSources = AppDatabase.getAllBookSources()
-                                        val source = allSources.firstOrNull { it.bookSourceUrl == batchCacheBook!!.origin }
-                                        if (source != null && batchCacheChapters.isNotEmpty()) {
-                                            BookCacheEngine.startBatchDownload(batchCacheBook!!, source, batchCacheChapters, 0, totalCh)
-                                        }
-                                    }
-                                    batchCacheBook = null
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("⚡ 缓存全本书籍 (全书 $totalCh 章)")
+                                Icon(LegadoIcons.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                                Text(opt, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                             }
                         }
                     }
-                },
-                confirmButton = {
-                    TextButton(onClick = { batchCacheBook = null }) {
-                        Text("关闭")
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showMoveToGroupDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // Phase 19 Dialogs: Safe Delete Dialog (Adheres to Rule 5 Safe File Operations)
+    if (safeDeleteTargetBooks != null) {
+        val targets = safeDeleteTargetBooks!!
+        var moveToTrash by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { safeDeleteTargetBooks = null },
+            icon = {
+                Icon(LegadoIcons.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(28.dp))
+            },
+            title = {
+                Text("确认移除书籍", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "即将从书架移除以下 ${targets.size} 本书籍：",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 140.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp).verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            targets.forEach { b ->
+                                Text("• 《${b.name}》 ${if (b.author.isNotBlank()) "(${b.author})" else ""}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { moveToTrash = !moveToTrash }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Checkbox(
+                            checked = moveToTrash,
+                            onCheckedChange = { moveToTrash = it }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "同时将本地源文件移入系统回收站 (仅对本地导入文件生效，非永久粉碎)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
-            )
-        }
-
-        if (exportBook != null) {
-            BookExportDialog(
-                book = exportBook!!,
-                onDismissRequest = { exportBook = null }
-            )
-        }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteBooks(targets, moveToTrash)
+                        safeDeleteTargetBooks = null
+                        selectedBookUrls.removeAll(targets.map { it.bookUrl })
+                        if (isBatchMode && selectedBookUrls.isEmpty()) {
+                            isBatchMode = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text("确认移除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { safeDeleteTargetBooks = null }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 
@@ -1018,15 +1681,27 @@ fun BookCard(
     onOpen: () -> Unit,
     onCache: () -> Unit,
     onExport: () -> Unit = {},
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    isBatchMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: () -> Unit = {}
 ) {
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onOpen() },
+            .then(
+                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
+                else Modifier
+            )
+            .clickable {
+                if (isBatchMode) onToggleSelect() else onOpen()
+            },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            containerColor = if (isSelected)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+            else
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         )
     ) {
         Column(
@@ -1055,6 +1730,36 @@ fun BookCard(
                         fontWeight = FontWeight.Bold
                     )
                 }
+
+                // Batch mode checkbox in top-right
+                if (isBatchMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelect() },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                    )
+                }
+
+                // Custom group tag in bottom-start if present
+                if (!book.customGroup.isNullOrBlank()) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(6.dp),
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                    ) {
+                        Text(
+                            text = book.customGroup!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -1077,30 +1782,32 @@ fun BookCard(
                     maxLines = 1,
                     modifier = Modifier.weight(1f)
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onCache, modifier = Modifier.size(28.dp)) {
-                        Icon(
-                            LegadoIcons.CloudDownload,
-                            contentDescription = "批量缓存",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    IconButton(onClick = onExport, modifier = Modifier.size(28.dp)) {
-                        Icon(
-                            LegadoIcons.Download,
-                            contentDescription = "导出书籍 (TXT/EPUB)",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
-                        Icon(
-                            LegadoIcons.Delete,
-                            contentDescription = "删除书籍",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(16.dp)
-                        )
+                if (!isBatchMode) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onCache, modifier = Modifier.size(28.dp)) {
+                            Icon(
+                                LegadoIcons.CloudDownload,
+                                contentDescription = "批量缓存",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        IconButton(onClick = onExport, modifier = Modifier.size(28.dp)) {
+                            Icon(
+                                LegadoIcons.Download,
+                                contentDescription = "导出书籍 (TXT/EPUB)",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
+                            Icon(
+                                LegadoIcons.Delete,
+                                contentDescription = "删除书籍",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }

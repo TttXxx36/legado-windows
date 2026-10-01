@@ -14,6 +14,7 @@ data class Book(
     var charset: String? = null,               // 编码
     var type: Int = 0,                         // 0: 文本, 1: 音频, 2: 漫画, 3: 本地
     var group: Int = 0,                        // 分组
+    var customGroup: String? = null,           // 自定义书架分组名称
     var latestChapterTitle: String? = null,    // 最新章节名
     var latestChapterTime: Long = 0L,          // 最新更新时间
     var lastCheckTime: Long = 0L,              // 上次检查更新时间
